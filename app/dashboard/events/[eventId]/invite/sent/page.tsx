@@ -34,10 +34,8 @@ export default async function InviteSentPage({ params, searchParams }: PageProps
   const noContact = asInt(sp.none);
 
   const totalMessages = sms + email;
-  const failed =
-    !process.env.TWILIO_ACCOUNT_SID && sms > 0
-      ? sms
-      : 0; /* surfaced in UI as "provider not configured" */
+  const smsWillFail = !process.env.TWILIO_ACCOUNT_SID && sms > 0 ? sms : 0;
+  const emailWillFail = !process.env.RESEND_API_KEY && email > 0 ? email : 0;
 
   return (
     <div style={{ position: "relative", paddingBottom: 96 }}>
@@ -104,9 +102,15 @@ export default async function InviteSentPage({ params, searchParams }: PageProps
           {noContact > 0 && (
             <Row label={`${noContact} skipped (no contact for channel)`} tone="default" />
           )}
-          {failed > 0 && (
+          {smsWillFail > 0 && (
             <Row
-              label={`${failed} will fail (Twilio not configured — see .env.local)`}
+              label={`${smsWillFail} will fail (Twilio not configured — see .env.local)`}
+              tone="warn"
+            />
+          )}
+          {emailWillFail > 0 && (
+            <Row
+              label={`${emailWillFail} will fail (Resend not configured — see .env.local)`}
               tone="warn"
             />
           )}

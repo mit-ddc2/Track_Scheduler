@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("next/cache", () => ({
   revalidatePath: vi.fn(),
@@ -14,6 +14,9 @@ const EVENT_ID = "11111111-1111-4111-8111-111111111111";
 const STAFF_ID = "22222222-2222-4222-8222-222222222222";
 
 const trace: string[] = [];
+
+/** Mutable event status so individual tests can flip to locked/completed/cancelled. */
+let eventStatus = "scheduled";
 
 const requireOwnerMock = vi.fn(async () => ({
   user: { id: "u1" },
@@ -55,7 +58,7 @@ vi.mock("@/lib/db/supabase-server", () => ({
                   data: {
                     id: EVENT_ID,
                     title: "Test Event",
-                    status: "scheduled",
+                    status: eventStatus,
                     starts_at: "2026-06-01T13:00:00Z",
                     ends_at: "2026-06-01T21:00:00Z",
                     completed_at: null,
@@ -100,6 +103,10 @@ vi.mock("@/lib/db/supabase-server", () => ({
     };
   }),
 }));
+
+beforeEach(() => {
+  eventStatus = "scheduled";
+});
 
 afterEach(() => {
   vi.clearAllMocks();
@@ -276,4 +283,50 @@ describe("lockEvent + completeEvent", () => {
     expect(a.error).toBeDefined();
     expect(b.error).toBeDefined();
   });
+});
+
+describe("assertEventEditable / frozen-state guards", () => {
+  const validInput = {
+    eventId: EVENT_ID,
+    staffMemberId: STAFF_ID,
+    status: "worked" as const,
+  };
+
+  for (const [frozen, message] of [
+    ["locked", "Event is locked"],
+    ["completed", "Event is completed"],
+    ["cancelled", "Event is cancelled"],
+  ] as const) {
+    it(`setAttendanceStatus refuses to write when status=${frozen}`, async () => {
+      eventStatus = frozen;
+      const { setAttendanceStatus } = await import("./actions");
+      const result = await setAttendanceStatus(validInput);
+      expect(result.error).toBe(message);
+      // The mutation must NOT run.
+      expect(trace.filter((t) => t.startsWith("upsert:attendance_records"))).toHaveLength(0);
+      expect(trace).not.toContain("audit");
+    });
+
+    it(`updateAttendanceDetails refuses to write when status=${frozen}`, async () => {
+      eventStatus = frozen;
+      const { updateAttendanceDetails } = await import("./actions");
+      const result = await updateAttendanceDetails({
+        eventId: EVENT_ID,
+        staffMemberId: STAFF_ID,
+        actual_hours: 4,
+      });
+      expect(result.error).toBe(message);
+      expect(trace.filter((t) => t.startsWith("upsert:attendance_records"))).toHaveLength(0);
+      expect(trace).not.toContain("audit");
+    });
+
+    it(`markAllWorked refuses to write when status=${frozen}`, async () => {
+      eventStatus = frozen;
+      const { markAllWorked } = await import("./actions");
+      const result = await markAllWorked({ eventId: EVENT_ID });
+      expect(result.error).toBe(message);
+      expect(trace.filter((t) => t.startsWith("upsert:attendance_records"))).toHaveLength(0);
+      expect(trace).not.toContain("audit");
+    });
+  }
 });

@@ -8,6 +8,7 @@ import type { AttendanceStatusEnum } from "@/lib/validation/schemas";
 const CYCLE: ReadonlyArray<AttendanceStatusEnum> = [
   "worked",
   "no_show",
+  "cancelled_by_member",
   "cancelled_by_manager",
   "excused",
 ];
@@ -16,8 +17,8 @@ const LABEL: Record<AttendanceStatusEnum, string> = {
   scheduled: "SCHEDULED",
   worked: "WORKED",
   no_show: "NO-SHOW",
-  cancelled_by_member: "CANCEL",
-  cancelled_by_manager: "CANCEL",
+  cancelled_by_member: "CANCEL · MEMBER",
+  cancelled_by_manager: "CANCEL · MGR",
   excused: "EXCUSED",
 };
 

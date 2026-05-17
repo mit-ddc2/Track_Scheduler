@@ -15,6 +15,15 @@ export type RsvpFormProps = {
   expiresAt: string;
   /** Server action injected as a prop to keep this component self-contained. */
   submitAction: (input: RsvpSubmitInput) => Promise<RsvpActionResult>;
+  /**
+   * Contact info for the "call the safety manager" footer link. Comes from
+   * `OWNER_CONTACT_PHONE` via `getOwnerContact()`. When `href` is empty we
+   * render plain text instead of a `tel:` link.
+   */
+  contact: {
+    label: string;
+    href: string;
+  };
 };
 
 function formatExpiry(iso: string): string {
@@ -37,6 +46,7 @@ export function RsvpForm({
   responderName,
   expiresAt,
   submitAction,
+  contact,
 }: RsvpFormProps) {
   const router = useRouter();
   const [error, setError] = useState<string | null>(null);
@@ -191,17 +201,30 @@ export function RsvpForm({
         Decline · can&rsquo;t make it
       </button>
       <div style={{ textAlign: "center", marginTop: 14 }}>
-        <a
-          className="mono"
-          href="tel:+16135550142"
-          style={{
-            fontSize: 11,
-            color: "var(--accent)",
-            letterSpacing: "0.06em",
-          }}
-        >
-          CALL ROBERT · +1 613-555-0142
-        </a>
+        {contact.href ? (
+          <a
+            className="mono"
+            href={`tel:${contact.href}`}
+            style={{
+              fontSize: 11,
+              color: "var(--accent)",
+              letterSpacing: "0.06em",
+            }}
+          >
+            CALL · {contact.label.toUpperCase()}
+          </a>
+        ) : (
+          <span
+            className="mono"
+            style={{
+              fontSize: 11,
+              color: "var(--text-3)",
+              letterSpacing: "0.06em",
+            }}
+          >
+            {contact.label.toUpperCase()}
+          </span>
+        )}
       </div>
     </>
   );

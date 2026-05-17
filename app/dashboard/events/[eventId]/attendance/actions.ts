@@ -15,7 +15,7 @@ import { revalidatePath } from "next/cache";
 import { requireOwner } from "@/lib/auth/require-owner";
 import { writeAudit } from "@/lib/db/audit";
 import { createClient } from "@/lib/db/supabase-server";
-import type { AttendanceRecordInsert } from "@/lib/db/types";
+import type { AttendanceRecordInsert, EventStatus } from "@/lib/db/types";
 import {
   attendanceStatusUpdateSchema,
   attendanceUpdateSchema,
@@ -28,6 +28,74 @@ import {
 } from "@/lib/validation/schemas";
 
 export type ActionResult = { ok?: true; error?: string };
+
+/**
+ * Minimal structural shape accepted by `assertEventEditable`. We declare it
+ * with `unknown`-typed methods so a real `SupabaseClient<Database>` is
+ * assignable (its return chain is much richer than what we need here) AND
+ * lightweight unit-test mocks fit without the test file having to import the
+ * full Supabase typings.
+ */
+type EventEditableClient = {
+  // Intentionally `unknown` return — we read it via a narrow `as` cast below.
+  from: (table: "events") => unknown;
+};
+
+type EventStatusRow = { status: EventStatus | null };
+
+/**
+ * Guards attendance mutations against frozen-event states. Throws an `Error`
+ * whose message is shown to the caller verbatim (server actions surface it
+ * via the standard error boundary; the cycle button surfaces it via its
+ * `error` return). Call AFTER `requireOwner()` and BEFORE any DB writes.
+ */
+export async function assertEventEditable(
+  supabase: EventEditableClient,
+  eventId: string,
+): Promise<void> {
+  // Cast to a structural shape with `.select(...).eq(...).maybeSingle()` so
+  // we can support both the real Supabase client and the lightweight test
+  // mocks in `actions.test.ts`. We deliberately do NOT depend on
+  // `SupabaseClient<Database>` here — that pulls the table's full schema
+  // type, which TS reports as "excessively deep" when inferred from a
+  // generic helper.
+  const builder = supabase.from("events") as {
+    select: (cols: string) => {
+      eq: (col: string, val: string) => {
+        maybeSingle: () => Promise<{
+          data: EventStatusRow | null;
+          error: { message: string } | null;
+        }>;
+      };
+    };
+  };
+  const { data, error } = await builder
+    .select("status")
+    .eq("id", eventId)
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  if (!data) throw new Error("Event not found");
+  switch (data.status) {
+    case "locked":
+      throw new Error("Event is locked");
+    case "completed":
+      throw new Error("Event is completed");
+    case "cancelled":
+      throw new Error("Event is cancelled");
+    default:
+      return;
+  }
+}
+
+/** Catch frozen-event errors thrown by `assertEventEditable` and surface
+ * them as a normal action error string (so the UI's optimistic update can
+ * roll back gracefully). Anything else re-throws. */
+function handleEditableError(err: unknown): ActionResult {
+  if (err instanceof Error && /^Event (is|not)/.test(err.message)) {
+    return { error: err.message };
+  }
+  throw err;
+}
 
 /**
  * Set just the attendance status for one assignee. Upserts on
@@ -45,6 +113,12 @@ export async function setAttendanceStatus(
   const { eventId, staffMemberId, status } = parsed.data;
 
   const supabase = await createClient();
+
+  try {
+    await assertEventEditable(supabase, eventId);
+  } catch (err) {
+    return handleEditableError(err);
+  }
 
   // Hydrate the assignment so we can carry the assignment_id and the event's
   // scheduled window into the attendance row on first write.
@@ -91,6 +165,8 @@ export async function setAttendanceStatus(
   });
 
   revalidatePath(`/dashboard/events/${eventId}/attendance`);
+  revalidatePath(`/dashboard/events/${eventId}`);
+  revalidatePath("/dashboard");
   return { ok: true };
 }
 
@@ -110,6 +186,12 @@ export async function updateAttendanceDetails(
   const { eventId, staffMemberId, ...patch } = parsed.data;
 
   const supabase = await createClient();
+
+  try {
+    await assertEventEditable(supabase, eventId);
+  } catch (err) {
+    return handleEditableError(err);
+  }
 
   // We need an assignment_id + scheduled window only when there is no
   // existing attendance row yet (so the upsert defaults are sensible).
@@ -172,6 +254,8 @@ export async function updateAttendanceDetails(
   });
 
   revalidatePath(`/dashboard/events/${eventId}/attendance`);
+  revalidatePath(`/dashboard/events/${eventId}`);
+  revalidatePath("/dashboard");
   return { ok: true };
 }
 
@@ -191,6 +275,12 @@ export async function markAllWorked(
   const { eventId } = parsed.data;
 
   const supabase = await createClient();
+
+  try {
+    await assertEventEditable(supabase, eventId);
+  } catch (err) {
+    return handleEditableError(err);
+  }
 
   const { data: event } = await supabase
     .from("events")
@@ -238,6 +328,8 @@ export async function markAllWorked(
   });
 
   revalidatePath(`/dashboard/events/${eventId}/attendance`);
+  revalidatePath(`/dashboard/events/${eventId}`);
+  revalidatePath("/dashboard");
   return { ok: true, count: rows.length };
 }
 
