@@ -2,10 +2,25 @@
  * Database typings — hand-rolled subset.
  *
  * The full `Database` type will be replaced with `supabase gen types typescript`
- * output once we wire up CI for it. For now we keep just what auth, the
- * dashboard shell, events, and notifications touch so RLS-aware client calls
- * are type-checked.
+ * output once we wire up CI for it. For now we keep just what auth, events,
+ * notifications, audit, and roster touch so RLS-aware client calls are
+ * type-checked.
  */
+
+// ─── Enums shared across the app ─────────────────────────────────────────
+
+export type PreferredContactMethod = "sms" | "email" | "both" | "manual_only";
+export type ContactChannel = "sms" | "email";
+export type ContactStatus =
+  | "unknown"
+  | "valid"
+  | "invalid"
+  | "bounced"
+  | "suppressed"
+  | "opted_out";
+export type ConsentStatus = "unknown" | "granted" | "denied" | "withdrawn";
+
+// ─── Profile ─────────────────────────────────────────────────────────────
 
 export type Profile = {
   id: string;
@@ -24,6 +39,119 @@ export type ProfileInsert = Omit<Profile, "created_at" | "updated_at"> & {
 };
 
 export type ProfileUpdate = Partial<Omit<Profile, "id" | "created_at">>;
+
+// ─── Roster: crew_roles, qualifications, staff_members + relations ──────
+
+export type CrewRole = {
+  id: string;
+  name: string;
+  description: string | null;
+  active: boolean;
+  sort_order: number;
+  created_at: string;
+  updated_at: string;
+};
+
+export type Qualification = {
+  id: string;
+  name: string;
+  description: string | null;
+  active: boolean;
+  created_at: string;
+  updated_at: string;
+};
+
+export type StaffMember = {
+  id: string;
+  display_name: string;
+  first_name: string | null;
+  last_name: string | null;
+  preferred_contact: PreferredContactMethod;
+  active: boolean;
+  notes: string | null;
+  imported_source: string | null;
+  created_by: string | null;
+  updated_by: string | null;
+  created_at: string;
+  updated_at: string;
+  archived_at: string | null;
+};
+
+export type StaffMemberInsert = {
+  id?: string;
+  display_name: string;
+  first_name?: string | null;
+  last_name?: string | null;
+  preferred_contact?: PreferredContactMethod;
+  active?: boolean;
+  notes?: string | null;
+  imported_source?: string | null;
+  created_by?: string | null;
+  updated_by?: string | null;
+  created_at?: string;
+  updated_at?: string;
+  archived_at?: string | null;
+};
+
+export type StaffMemberUpdate = {
+  display_name?: string;
+  first_name?: string | null;
+  last_name?: string | null;
+  preferred_contact?: PreferredContactMethod;
+  active?: boolean;
+  notes?: string | null;
+  updated_by?: string | null;
+  updated_at?: string;
+  archived_at?: string | null;
+};
+
+export type StaffContactMethod = {
+  id: string;
+  staff_member_id: string;
+  channel: ContactChannel;
+  value: string;
+  normalized_value: string;
+  is_primary: boolean;
+  status: ContactStatus;
+  consent: ConsentStatus;
+  consent_source: string | null;
+  consented_at: string | null;
+  opted_out_at: string | null;
+  last_verified_at: string | null;
+  last_delivery_status: string | null;
+  last_delivery_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type StaffRole = {
+  staff_member_id: string;
+  role_id: string;
+  is_primary: boolean;
+  notes: string | null;
+  created_at: string;
+};
+
+export type StaffQualification = {
+  staff_member_id: string;
+  qualification_id: string;
+  notes: string | null;
+  expires_at: string | null;
+  created_at: string;
+};
+
+export type ConsentRecord = {
+  id: string;
+  staff_member_id: string;
+  contact_method_id: string | null;
+  channel: ContactChannel;
+  status: ConsentStatus;
+  source: string;
+  captured_by: string | null;
+  captured_at: string;
+  notes: string | null;
+  evidence: Record<string, unknown>;
+};
 
 // ─── Events ──────────────────────────────────────────────────────────────
 
@@ -184,9 +312,6 @@ export type NotificationPreferenceUpdate = Partial<
 >;
 
 // ─── Audit log ───────────────────────────────────────────────────────────
-// Mirrors the `audit_log` table from supabase/migrations/0001_initial_schema.sql.
-// IMPORTANT: the column is `actor_user_id`, not `actor_id`. A mistake here
-// would silently 500 every audit insert once SUPABASE_SECRET_KEY is set.
 
 export type AuditLogRow = {
   id: string;
@@ -216,6 +341,8 @@ export type AuditLogInsert = {
   created_at?: string;
 };
 
+type Rel = [];
+
 export type Database = {
   public: {
     Tables: {
@@ -223,37 +350,149 @@ export type Database = {
         Row: Profile;
         Insert: ProfileInsert;
         Update: ProfileUpdate;
-        Relationships: [];
+        Relationships: Rel;
+      };
+      crew_roles: {
+        Row: CrewRole;
+        Insert: {
+          id?: string;
+          name: string;
+          description?: string | null;
+          active?: boolean;
+          sort_order?: number;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          name?: string;
+          description?: string | null;
+          active?: boolean;
+          sort_order?: number;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Relationships: Rel;
+      };
+      qualifications: {
+        Row: Qualification;
+        Insert: {
+          id?: string;
+          name: string;
+          description?: string | null;
+          active?: boolean;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          name?: string;
+          description?: string | null;
+          active?: boolean;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Relationships: Rel;
+      };
+      staff_members: {
+        Row: StaffMember;
+        Insert: StaffMemberInsert;
+        Update: StaffMemberUpdate;
+        Relationships: Rel;
+      };
+      staff_contact_methods: {
+        Row: StaffContactMethod;
+        Insert: {
+          id?: string;
+          staff_member_id: string;
+          channel: ContactChannel;
+          value: string;
+          normalized_value: string;
+          is_primary?: boolean;
+          status?: ContactStatus;
+          consent?: ConsentStatus;
+          consent_source?: string | null;
+          consented_at?: string | null;
+          opted_out_at?: string | null;
+          last_verified_at?: string | null;
+          last_delivery_status?: string | null;
+          last_delivery_at?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: Partial<StaffContactMethod>;
+        Relationships: Rel;
+      };
+      staff_roles: {
+        Row: StaffRole;
+        Insert: {
+          staff_member_id: string;
+          role_id: string;
+          is_primary?: boolean;
+          notes?: string | null;
+          created_at?: string;
+        };
+        Update: Partial<StaffRole>;
+        Relationships: Rel;
+      };
+      staff_qualifications: {
+        Row: StaffQualification;
+        Insert: {
+          staff_member_id: string;
+          qualification_id: string;
+          notes?: string | null;
+          expires_at?: string | null;
+          created_at?: string;
+        };
+        Update: Partial<StaffQualification>;
+        Relationships: Rel;
+      };
+      consent_records: {
+        Row: ConsentRecord;
+        Insert: {
+          id?: string;
+          staff_member_id: string;
+          contact_method_id?: string | null;
+          channel: ContactChannel;
+          status: ConsentStatus;
+          source: string;
+          captured_by?: string | null;
+          captured_at?: string;
+          notes?: string | null;
+          evidence?: Record<string, unknown>;
+        };
+        Update: Partial<ConsentRecord>;
+        Relationships: Rel;
       };
       events: {
         Row: EventRow;
         Insert: EventInsert;
         Update: EventUpdate;
-        Relationships: [];
+        Relationships: Rel;
       };
       event_requirements: {
         Row: EventRequirementRow;
         Insert: EventRequirementInsert;
         Update: Partial<EventRequirementRow>;
-        Relationships: [];
+        Relationships: Rel;
       };
       manager_notifications: {
         Row: ManagerNotification;
         Insert: ManagerNotificationInsert;
         Update: ManagerNotificationUpdate;
-        Relationships: [];
+        Relationships: Rel;
       };
       notification_preferences: {
         Row: NotificationPreference;
         Insert: NotificationPreferenceInsert;
         Update: NotificationPreferenceUpdate;
-        Relationships: [];
+        Relationships: Rel;
       };
       audit_log: {
         Row: AuditLogRow;
         Insert: AuditLogInsert;
         Update: Partial<AuditLogRow>;
-        Relationships: [];
+        Relationships: Rel;
       };
     };
     Views: Record<string, never>;
@@ -262,8 +501,22 @@ export type Database = {
         Args: { p_event_id: string; p_requirements: unknown };
         Returns: void;
       };
+      update_staff_relations_tx: {
+        Args: {
+          p_staff_id: string;
+          p_contact_methods: unknown;
+          p_role_ids: string[];
+          p_primary_role_id: string | null;
+          p_qualification_ids: unknown;
+        };
+        Returns: void;
+      };
     };
     Enums: {
+      preferred_contact_method: PreferredContactMethod;
+      contact_channel: ContactChannel;
+      contact_status: ContactStatus;
+      consent_status: ConsentStatus;
       event_status: EventStatus;
       event_source_type: EventSourceType;
       notification_severity: NotificationSeverity;

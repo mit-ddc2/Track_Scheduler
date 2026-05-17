@@ -1,45 +1,71 @@
+import {
+  Award,
+  Bell,
+  CalendarClock,
+  ChevronRight,
+  Download,
+  History,
+  ShieldCheck,
+  Users,
+} from "lucide-react";
 import Link from "next/link";
 
 import { Card } from "@/components/ui/Card";
-import { Chip } from "@/components/ui/Chip";
 
-type Entry = {
+type SettingsLink = {
   href: string;
-  label: string;
-  sub: string;
-  status?: "live" | "soon";
+  title: string;
+  description: string;
+  icon: React.ComponentType<{ size?: number; strokeWidth?: number }>;
+  badge?: string;
 };
 
-const ENTRIES: Entry[] = [
+const LINKS: SettingsLink[] = [
+  {
+    href: "/dashboard/settings/roles",
+    title: "Crew roles",
+    description: "Manage operational role categories (Incident Lead, Rescue Crew…)",
+    icon: Users,
+  },
+  {
+    href: "/dashboard/settings/qualifications",
+    title: "Qualifications",
+    description: "Manage capability tags (Fire Suppression, Extrication, First Aid…)",
+    icon: Award,
+  },
   {
     href: "/dashboard/settings/notifications",
-    label: "Notifications",
-    sub: "Choose how you hear about each kind of event.",
-    status: "live",
+    title: "Notification preferences",
+    description: "Choose how you hear about each kind of event (in-app, email, SMS).",
+    icon: Bell,
   },
   {
     href: "/dashboard/settings/calendar",
-    label: "Calendar sync",
-    sub: "Manual entry only · Google + ICS in v1.1",
-    status: "soon",
+    title: "Calendar",
+    description: "Google Calendar / ICS feed connections.",
+    icon: CalendarClock,
+    badge: "v1.1",
   },
   {
-    href: "#",
-    label: "Message templates",
-    sub: "Phase 5 — SMS + email defaults",
-    status: "soon",
+    href: "/dashboard/settings/exports",
+    title: "Exports",
+    description: "Bulk exports for roster, attendance, audit.",
+    icon: Download,
+    badge: "v1.1",
   },
   {
-    href: "#",
-    label: "Consent & opt-outs",
-    sub: "Phase 5 — STOP/HELP audit trail",
-    status: "soon",
+    href: "/dashboard/settings/consent",
+    title: "Consent & opt-outs",
+    description: "Per-channel consent records and suppression list.",
+    icon: ShieldCheck,
+    badge: "v1.1",
   },
   {
-    href: "#",
-    label: "Audit log",
-    sub: "Phase 6 — mutation history viewer",
-    status: "soon",
+    href: "/dashboard/settings/audit",
+    title: "Audit log",
+    description: "Searchable activity log of every owner action.",
+    icon: History,
+    badge: "v1.1",
   },
 ];
 
@@ -47,50 +73,90 @@ export default function SettingsPage() {
   return (
     <div
       style={{
-        padding: "20px 16px 32px",
+        padding: "20px 16px 80px",
+        display: "flex",
+        flexDirection: "column",
+        gap: 14,
         maxWidth: 720,
         margin: "0 auto",
       }}
     >
-      <span className="cs-eyebrow">Owner</span>
-      <h1 className="cs-h1" style={{ marginTop: 6 }}>
-        Settings
-      </h1>
-
-      <Card style={{ marginTop: 16 }}>
-        {ENTRIES.map((it, idx) => (
-          <div key={it.href + idx}>
-            {idx > 0 && <hr className="cs-divider" />}
+      <div>
+        <span className="cs-eyebrow">Owner</span>
+        <h1 className="cs-h1" style={{ marginTop: 4 }}>
+          Settings
+        </h1>
+      </div>
+      <Card>
+        {LINKS.map((link, i) => (
+          <div key={link.href}>
+            {i > 0 && <div className="cs-divider" />}
             <Link
-              href={it.href}
+              href={link.href}
               style={{
                 display: "flex",
-                gap: 12,
                 alignItems: "center",
-                padding: 14,
-                color: "var(--text)",
+                gap: 14,
+                padding: "14px 16px",
+                color: "inherit",
                 textDecoration: "none",
+                minHeight: 64,
               }}
             >
+              <span
+                style={{
+                  width: 36,
+                  height: 36,
+                  borderRadius: 4,
+                  background: "var(--surface-2)",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  color: "var(--text-2)",
+                  flexShrink: 0,
+                }}
+              >
+                <link.icon size={16} strokeWidth={1.6} />
+              </span>
               <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: 13, fontWeight: 600 }}>{it.label}</div>
                 <div
-                  className="cs-label"
                   style={{
-                    marginTop: 3,
-                    color: "var(--text-3)",
-                    letterSpacing: "0.04em",
-                    textTransform: "none",
+                    fontWeight: 600,
+                    fontSize: 14,
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 8,
                   }}
                 >
-                  {it.sub}
+                  {link.title}
+                  {link.badge && (
+                    <span
+                      className="mono"
+                      style={{
+                        fontSize: 9,
+                        background: "var(--chip-bg)",
+                        color: "var(--text-3)",
+                        padding: "2px 6px",
+                        borderRadius: 3,
+                        letterSpacing: "0.06em",
+                        textTransform: "uppercase",
+                      }}
+                    >
+                      {link.badge}
+                    </span>
+                  )}
+                </div>
+                <div
+                  style={{
+                    color: "var(--text-3)",
+                    fontSize: 12,
+                    marginTop: 3,
+                  }}
+                >
+                  {link.description}
                 </div>
               </div>
-              {it.status === "soon" ? (
-                <Chip tone="warn">SOON</Chip>
-              ) : (
-                <Chip tone="ok">LIVE</Chip>
-              )}
+              <ChevronRight size={16} strokeWidth={1.6} color="var(--text-3)" />
             </Link>
           </div>
         ))}
