@@ -53,7 +53,6 @@ const inputStyle: React.CSSProperties = {
   color: "var(--text)",
   fontFamily: "inherit",
   fontSize: 13,
-  outline: "none",
 };
 
 export function EventForm({ mode, initial, action, cancelHref }: EventFormProps) {

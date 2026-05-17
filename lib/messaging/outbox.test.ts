@@ -411,6 +411,89 @@ describe("drainOutbox", () => {
     });
   });
 
+  describe("P-H1: batched suppression context", () => {
+    it("issues a constant number of select queries per drain regardless of batch size", async () => {
+      // Seed 25 pending rows across 25 staff members + 5 campaigns + 5
+      // events. The legacy per-row checkSuppression would issue 1-3
+      // selects PER ROW (25-75 selects across these tables); the batched
+      // path issues at most 3 selects total (contact_methods / campaigns
+      // / events), regardless of batch size.
+      const N = 25;
+      const rows = Array.from({ length: N }, (_, i) => ({
+        id: `row${i}`,
+        staff_member_id: `staff${i}`,
+        campaign_id: `camp${i % 5}`,
+        channel: "sms",
+        to_value: `+1416555${String(i).padStart(4, "0")}`,
+        body_text: "hi",
+        provider: "twilio",
+        idempotency_key: `k${i}`,
+        status: "pending",
+        attempt_count: 0,
+        next_attempt_at: null,
+        created_at: `2026-01-01T00:00:${String(i % 60).padStart(2, "0")}Z`,
+      }));
+      db.seed("message_outbox", rows);
+      db.seed(
+        "staff_contact_methods",
+        Array.from({ length: N }, (_, i) => ({
+          staff_member_id: `staff${i}`,
+          channel: "sms",
+          normalized_value: `+1416555${String(i).padStart(4, "0")}`,
+          value: `+1416555${String(i).padStart(4, "0")}`,
+          status: "valid",
+          consent: "granted",
+          is_primary: true,
+        })),
+      );
+      db.seed(
+        "invitation_campaigns",
+        Array.from({ length: 5 }, (_, i) => ({
+          id: `camp${i}`,
+          event_id: `evt${i}`,
+          campaign_type: "initial",
+        })),
+      );
+      db.seed(
+        "events",
+        Array.from({ length: 5 }, (_, i) => ({
+          id: `evt${i}`,
+          status: "scheduled",
+        })),
+      );
+      mod.__setProvidersForTesting({
+        sendSms: (async () => ({
+          accepted: true,
+          providerMessageId: "SM1",
+        })) as never,
+        sendEmail: vi.fn() as never,
+      });
+
+      db.ops.length = 0;
+      const result = await mod.drainOutbox({ limit: N });
+      expect(result.attempted).toBe(N);
+      expect(result.sent).toBe(N);
+
+      // The drain itself issues exactly 1 SELECT on message_outbox to
+      // pull the batch. The batched suppression context then issues at
+      // most 1 SELECT on each of staff_contact_methods, invitation_
+      // campaigns, and events (3 SELECTs). Total selects across the
+      // entire drain: at most 4, independent of N.
+      const selects = db.ops.filter((o) => o.kind === "select");
+      const selectsByTable = selects.reduce<Record<string, number>>(
+        (acc, o) => {
+          acc[o.table] = (acc[o.table] ?? 0) + 1;
+          return acc;
+        },
+        {},
+      );
+      expect(selectsByTable.message_outbox).toBe(1);
+      expect(selectsByTable.staff_contact_methods).toBe(1);
+      expect(selectsByTable.invitation_campaigns).toBe(1);
+      expect(selectsByTable.events).toBe(1);
+    });
+  });
+
   it("ignores rows whose next_attempt_at is in the future", async () => {
     db.seed("message_outbox", [
       {

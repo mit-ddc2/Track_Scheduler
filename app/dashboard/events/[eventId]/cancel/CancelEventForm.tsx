@@ -72,7 +72,6 @@ export function CancelEventForm({ action, backHref }: CancelEventFormProps) {
             fontFamily: "inherit",
             fontSize: 13,
             resize: "vertical",
-            outline: "none",
           }}
         />
         <p

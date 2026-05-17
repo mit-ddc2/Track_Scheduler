@@ -19,11 +19,14 @@ export default async function ReplacementsPage({ params }: PageProps) {
   await requireOwner();
   const { eventId } = await params;
 
-  const event = await getEvent(eventId);
+  // event/requirements/candidates are independent reads — fan out so the
+  // page TTFB equals the slowest single query, not the sum.
+  const [event, requirements, candidates] = await Promise.all([
+    getEvent(eventId),
+    listEventRequirements(eventId),
+    getReplacementCandidates({ eventId }),
+  ]);
   if (!event) notFound();
-
-  const requirements = await listEventRequirements(eventId);
-  const candidates = await getReplacementCandidates({ eventId });
 
   // Headline summary line: "Short by N · Need: 2× EXTR, 1× MED".
   // Phase 3 doesn't surface live coverage yet (Phase 5b backfills), so we

@@ -117,14 +117,7 @@ export function LoginForm() {
           borderRadius: 4,
           color: "var(--text)",
           fontSize: 14,
-          outline: "none",
           transition: "border-color 100ms ease",
-        }}
-        onFocus={(e) => {
-          e.currentTarget.style.borderColor = "var(--line-2)";
-        }}
-        onBlur={(e) => {
-          e.currentTarget.style.borderColor = "var(--line)";
         }}
       />
       {state.kind === "error" && (

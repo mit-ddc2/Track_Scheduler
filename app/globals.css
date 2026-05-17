@@ -15,7 +15,7 @@
   --line-2:    rgba(255, 255, 255, 0.14);
   --text:      #ececec;
   --text-2:    #a3a3a3;
-  --text-3:    #6b6b6b;
+  --text-3:    #9a9a9a;
   --accent:    #E63946;
   --accent-ink:#fff;
   --ok:        #22c55e;
@@ -37,7 +37,7 @@
   --line-2:    rgba(0, 0, 0, 0.16);
   --text:      #0a0a0a;
   --text-2:    #4a4a4a;
-  --text-3:    #8a8a8a;
+  --text-3:    #595959;
   --accent:    #cf2031;
   --accent-ink:#fff;
   --ok:        #16a34a;
@@ -59,7 +59,7 @@
   --line-2:    rgba(255, 80, 80, 0.24);
   --text:      #fff5f3;
   --text-2:    #f0a7a0;
-  --text-3:    #a06661;
+  --text-3:    #c79490;
   --accent:    #ff3a3a;
   --accent-ink:#0a0303;
   --ok:        #5be38f;
@@ -169,6 +169,27 @@ body {
 
 /* Tap highlight off */
 button, [role="button"] { -webkit-tap-highlight-color: transparent; }
+
+/* ── Focus styles (A-H1) ──
+   Keyboard users need a visible focus ring. We rely on :focus-visible so
+   the ring doesn't appear on mouse click — only on keyboard navigation. */
+*:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.cs-btn:focus-visible,
+button:focus-visible,
+a:focus-visible {
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 40%, transparent);
+  outline-offset: 2px;
+}
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible {
+  border-color: var(--accent) !important;
+  outline: none;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 40%, transparent);
+}
 
 /* Density variants */
 [data-density="compact"] {

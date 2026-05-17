@@ -70,7 +70,12 @@ export function RsvpForm({
 
   if (localStatus === "accepted") {
     return (
-      <div style={{ textAlign: "center", padding: "8px 0" }}>
+      <div
+        role="status"
+        aria-live="polite"
+        aria-atomic="true"
+        style={{ textAlign: "center", padding: "8px 0" }}
+      >
         <div
           className="cs-eyebrow"
           style={{ color: "var(--ok)", marginBottom: 6 }}
@@ -106,7 +111,12 @@ export function RsvpForm({
 
   if (localStatus === "declined" || localStatus === "cancelled_by_member") {
     return (
-      <div style={{ textAlign: "center", padding: "8px 0" }}>
+      <div
+        role="status"
+        aria-live="polite"
+        aria-atomic="true"
+        style={{ textAlign: "center", padding: "8px 0" }}
+      >
         <div
           className="cs-eyebrow"
           style={{ color: "var(--text-3)", marginBottom: 6 }}
@@ -142,7 +152,7 @@ export function RsvpForm({
 
   // "invited" (default)
   return (
-    <>
+    <div role="status" aria-live="polite" aria-atomic="true">
       <div
         style={{
           display: "flex",
@@ -226,7 +236,7 @@ export function RsvpForm({
           </span>
         )}
       </div>
-    </>
+    </div>
   );
 }
 
