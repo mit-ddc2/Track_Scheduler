@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Inter, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
 
@@ -20,6 +20,24 @@ export const metadata: Metadata = {
   title: "Calabogie Safety — Crew Rescue Staffing",
   description:
     "Single-user staffing dashboard for Calabogie Motorsports Park's emergency rescue team.",
+  manifest: "/manifest.json",
+  appleWebApp: {
+    capable: true,
+    title: "Safety",
+    statusBarStyle: "black-translucent",
+  },
+  icons: {
+    icon: [
+      { url: "/icon-192.png", sizes: "192x192", type: "image/png" },
+      { url: "/icon-512.png", sizes: "512x512", type: "image/png" },
+    ],
+    apple: [{ url: "/apple-touch-icon.png", sizes: "180x180", type: "image/png" }],
+  },
+};
+
+// Theme-color must live on `viewport` since Next.js 14 (themeColor on metadata is deprecated).
+export const viewport: Viewport = {
+  themeColor: "#0a0a0a",
 };
 
 export default function RootLayout({
