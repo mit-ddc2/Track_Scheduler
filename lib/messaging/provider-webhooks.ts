@@ -83,17 +83,24 @@ export async function processTwilioStatusCallback(
   }
   const outboxId = outbox.data?.id ?? null;
 
-  // Insert message_events row (idempotent — unique constraint on
-  // (provider, provider_message_id, event_type, received_at)).
+  // Upsert message_events row. The unique index is on
+  // (provider, provider_message_id, event_type); duplicate webhooks become
+  // no-ops with ignoreDuplicates:true.
   await admin
     .from("message_events" as never)
-    .insert({
-      message_outbox_id: outboxId,
-      provider: "twilio",
-      provider_message_id: sid,
-      event_type: `status.${(status ?? "unknown").toLowerCase()}`,
-      payload: payload as unknown as Record<string, unknown>,
-    } as never);
+    .upsert(
+      {
+        message_outbox_id: outboxId,
+        provider: "twilio",
+        provider_message_id: sid,
+        event_type: `status.${(status ?? "unknown").toLowerCase()}`,
+        payload: payload as unknown as Record<string, unknown>,
+      } as never,
+      {
+        onConflict: "provider,provider_message_id,event_type",
+        ignoreDuplicates: true,
+      } as never,
+    );
 
   // Update outbox status if it's a terminal transition.
   const mapped = twilioStatusToOutbox(status);
@@ -298,13 +305,19 @@ export async function processResendEvent(
 
   await admin
     .from("message_events" as never)
-    .insert({
-      message_outbox_id: outboxId,
-      provider: "resend",
-      provider_message_id: emailId ?? null,
-      event_type: payload.type,
-      payload: payload as unknown as Record<string, unknown>,
-    } as never);
+    .upsert(
+      {
+        message_outbox_id: outboxId,
+        provider: "resend",
+        provider_message_id: emailId ?? null,
+        event_type: payload.type,
+        payload: payload as unknown as Record<string, unknown>,
+      } as never,
+      {
+        onConflict: "provider,provider_message_id,event_type",
+        ignoreDuplicates: true,
+      } as never,
+    );
 
   const mapped = resendTypeToOutboxStatus(payload.type);
   let updated = false;

@@ -113,7 +113,6 @@ export const cancelEventSchema = z.object({
 
 export type CancelEventInput = z.infer<typeof cancelEventSchema>;
 
-<<<<<<< HEAD
 // ─── Roster / staff / roles / qualifications / CSV ───────────────────────
 
 export const preferredContactSchema = z.enum([

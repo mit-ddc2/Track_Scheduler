@@ -343,9 +343,13 @@ create table message_events (
   provider_message_id text,
   event_type text not null,
   payload jsonb not null default '{}',
-  received_at timestamptz not null default now(),
-  unique(provider, provider_message_id, event_type, received_at)
+  received_at timestamptz not null default now()
 );
+-- Dedupe: providers can fire the same webhook multiple times. We hash on
+-- (provider, provider_message_id, event_type) and drop duplicates at
+-- upsert time. received_at is intentionally NOT part of the key.
+create unique index message_events_dedupe
+  on message_events (provider, provider_message_id, event_type);
 
 -- ─── Attendance & consent ─────────────────────────────────────
 create table attendance_records (

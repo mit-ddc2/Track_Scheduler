@@ -16,8 +16,9 @@ export const dynamic = "force-dynamic";
 /**
  * Twilio webhook entry. One endpoint handles both delivery callbacks (the
  * MessageStatus webhook configured per Messaging Service) and inbound SMS
- * (STOP/HELP/START). We distinguish by payload shape: inbound has a `Body`
- * field; status callbacks have `MessageStatus`/`SmsStatus`.
+ * (STOP/HELP/START). We distinguish by payload shape: status callbacks
+ * include `MessageStatus`/`SmsStatus`; inbound messages do not (a `Body`
+ * is unreliable — Twilio can include an empty Body on certain callbacks).
  */
 export async function POST(request: NextRequest) {
   const authToken = process.env.TWILIO_AUTH_TOKEN;
@@ -50,27 +51,35 @@ export async function POST(request: NextRequest) {
     return new NextResponse("forbidden", { status: 403 });
   }
 
-  // Try inbound shape first.
-  const inbound = twilioInboundSchema.safeParse({
-    ...paramObj,
-  });
-  if (inbound.success && typeof paramObj.Body === "string") {
-    try {
-      await processTwilioInbound(inbound.data);
-    } catch (err) {
-      console.error("[twilio-webhook] inbound error:", err);
-    }
-    return new NextResponse("ok", { status: 200 });
-  }
+  // Route by payload shape. Status callbacks always include either
+  // MessageStatus or SmsStatus; inbound messages do not. We previously
+  // keyed on Body presence, but that field is sometimes empty on inbound
+  // and sometimes echoed on status — checking the status fields is the
+  // more reliable signal.
+  const isStatusCallback =
+    typeof paramObj.MessageStatus === "string" ||
+    typeof paramObj.SmsStatus === "string";
 
-  const status = twilioStatusCallbackSchema.safeParse(paramObj);
-  if (status.success) {
-    try {
-      await processTwilioStatusCallback(status.data);
-    } catch (err) {
-      console.error("[twilio-webhook] status error:", err);
+  if (isStatusCallback) {
+    const status = twilioStatusCallbackSchema.safeParse(paramObj);
+    if (status.success) {
+      try {
+        await processTwilioStatusCallback(status.data);
+      } catch (err) {
+        console.error("[twilio-webhook] status error:", err);
+      }
+      return new NextResponse("ok", { status: 200 });
     }
-    return new NextResponse("ok", { status: 200 });
+  } else {
+    const inbound = twilioInboundSchema.safeParse(paramObj);
+    if (inbound.success) {
+      try {
+        await processTwilioInbound(inbound.data);
+      } catch (err) {
+        console.error("[twilio-webhook] inbound error:", err);
+      }
+      return new NextResponse("ok", { status: 200 });
+    }
   }
 
   // We accepted+verified the signature but couldn't parse — still 200 so

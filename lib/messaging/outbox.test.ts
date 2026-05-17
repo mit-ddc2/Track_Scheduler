@@ -160,6 +160,257 @@ describe("drainOutbox", () => {
     expect(db.tables.message_outbox[0].attempt_count).toBe(4);
   });
 
+  it("only one drainer sends when two run concurrently on the same row", async () => {
+    db.seed("message_outbox", [
+      {
+        id: "row1",
+        channel: "sms",
+        to_value: "+14165550001",
+        body_text: "hi",
+        provider: "twilio",
+        idempotency_key: "k1",
+        status: "pending",
+        attempt_count: 0,
+        next_attempt_at: null,
+        created_at: "2026-01-01T00:00:00Z",
+      },
+    ]);
+    const sms = vi.fn<(_: unknown) => Promise<SendResult>>(async () => ({
+      accepted: true,
+      providerMessageId: "SM999",
+    }));
+    mod.__setProvidersForTesting({
+      sendSms: sms as never,
+      sendEmail: vi.fn() as never,
+    });
+
+    // Two drains see the same pending row in their initial SELECT, then
+    // race on the claim UPDATE. The second one's WHERE status='pending'
+    // filter must fail (rowcount=0) and skip the row.
+    const [a, b] = await Promise.all([
+      mod.drainOutbox({ limit: 10 }),
+      mod.drainOutbox({ limit: 10 }),
+    ]);
+
+    // Exactly one provider call total.
+    expect(sms).toHaveBeenCalledTimes(1);
+    // Sum of sent across both runs is 1; the other run sees 0 sent.
+    expect(a.sent + b.sent).toBe(1);
+    expect(db.tables.message_outbox[0].status).toBe("sent");
+    expect(db.tables.message_outbox[0].provider_message_id).toBe("SM999");
+  });
+
+  describe("suppression (spec §14.3)", () => {
+    function seedOutboxFor(opts: {
+      staffMemberId?: string;
+      campaignId?: string;
+      channel?: "sms" | "email";
+      toValue?: string;
+    } = {}) {
+      db.seed("message_outbox", [
+        {
+          id: "row_supp",
+          staff_member_id: opts.staffMemberId ?? "sm1",
+          campaign_id: opts.campaignId ?? null,
+          channel: opts.channel ?? "sms",
+          to_value: opts.toValue ?? "+14165550001",
+          body_text: "hi",
+          provider: "twilio",
+          idempotency_key: "k_supp",
+          status: "pending",
+          attempt_count: 0,
+          next_attempt_at: null,
+          created_at: "2026-01-01T00:00:00Z",
+        },
+      ]);
+    }
+
+    function withNoProviderCalls() {
+      const sms = vi.fn();
+      const email = vi.fn();
+      mod.__setProvidersForTesting({
+        sendSms: sms as never,
+        sendEmail: email as never,
+      });
+      return { sms, email };
+    }
+
+    it("skips when contact_status is opted_out", async () => {
+      seedOutboxFor();
+      db.seed("staff_contact_methods", [
+        {
+          staff_member_id: "sm1",
+          channel: "sms",
+          normalized_value: "+14165550001",
+          value: "+14165550001",
+          status: "opted_out",
+          consent: "withdrawn",
+          is_primary: true,
+        },
+      ]);
+      const { sms } = withNoProviderCalls();
+      const r = await mod.drainOutbox({ limit: 10 });
+      expect(sms).not.toHaveBeenCalled();
+      expect(r).toMatchObject({ attempted: 1, suppressed: 1, sent: 0 });
+      const row = db.tables.message_outbox[0];
+      expect(row.status).toBe("cancelled");
+      expect(row.error_code).toBe("SUPPRESSED");
+    });
+
+    it("skips when contact_status is bounced", async () => {
+      seedOutboxFor();
+      db.seed("staff_contact_methods", [
+        {
+          staff_member_id: "sm1",
+          channel: "sms",
+          normalized_value: "+14165550001",
+          value: "+14165550001",
+          status: "bounced",
+          consent: "granted",
+          is_primary: true,
+        },
+      ]);
+      const { sms } = withNoProviderCalls();
+      const r = await mod.drainOutbox({ limit: 10 });
+      expect(sms).not.toHaveBeenCalled();
+      expect(r.suppressed).toBe(1);
+    });
+
+    it("skips when contact_status is suppressed", async () => {
+      seedOutboxFor();
+      db.seed("staff_contact_methods", [
+        {
+          staff_member_id: "sm1",
+          channel: "sms",
+          normalized_value: "+14165550001",
+          value: "+14165550001",
+          status: "suppressed",
+          consent: "granted",
+          is_primary: true,
+        },
+      ]);
+      const { sms } = withNoProviderCalls();
+      const r = await mod.drainOutbox({ limit: 10 });
+      expect(sms).not.toHaveBeenCalled();
+      expect(r.suppressed).toBe(1);
+    });
+
+    it("skips when contact_status is invalid", async () => {
+      seedOutboxFor();
+      db.seed("staff_contact_methods", [
+        {
+          staff_member_id: "sm1",
+          channel: "sms",
+          normalized_value: "+14165550001",
+          value: "+14165550001",
+          status: "invalid",
+          consent: "granted",
+          is_primary: true,
+        },
+      ]);
+      const { sms } = withNoProviderCalls();
+      const r = await mod.drainOutbox({ limit: 10 });
+      expect(sms).not.toHaveBeenCalled();
+      expect(r.suppressed).toBe(1);
+    });
+
+    it("skips when consent is withdrawn", async () => {
+      seedOutboxFor();
+      db.seed("staff_contact_methods", [
+        {
+          staff_member_id: "sm1",
+          channel: "sms",
+          normalized_value: "+14165550001",
+          value: "+14165550001",
+          status: "valid",
+          consent: "withdrawn",
+          is_primary: true,
+        },
+      ]);
+      const { sms } = withNoProviderCalls();
+      const r = await mod.drainOutbox({ limit: 10 });
+      expect(sms).not.toHaveBeenCalled();
+      expect(r.suppressed).toBe(1);
+    });
+
+    it("skips when consent is denied", async () => {
+      seedOutboxFor();
+      db.seed("staff_contact_methods", [
+        {
+          staff_member_id: "sm1",
+          channel: "sms",
+          normalized_value: "+14165550001",
+          value: "+14165550001",
+          status: "valid",
+          consent: "denied",
+          is_primary: true,
+        },
+      ]);
+      const { sms } = withNoProviderCalls();
+      const r = await mod.drainOutbox({ limit: 10 });
+      expect(sms).not.toHaveBeenCalled();
+      expect(r.suppressed).toBe(1);
+    });
+
+    it("skips when the event is cancelled (non-cancellation campaign)", async () => {
+      seedOutboxFor({ campaignId: "camp1" });
+      db.seed("staff_contact_methods", [
+        {
+          staff_member_id: "sm1",
+          channel: "sms",
+          normalized_value: "+14165550001",
+          value: "+14165550001",
+          status: "valid",
+          consent: "granted",
+          is_primary: true,
+        },
+      ]);
+      db.seed("invitation_campaigns", [
+        { id: "camp1", event_id: "evt1", campaign_type: "initial" },
+      ]);
+      db.seed("events", [{ id: "evt1", status: "cancelled" }]);
+      const { sms } = withNoProviderCalls();
+      const r = await mod.drainOutbox({ limit: 10 });
+      expect(sms).not.toHaveBeenCalled();
+      expect(r.suppressed).toBe(1);
+      expect(db.tables.message_outbox[0].error_message).toBe("event_cancelled");
+    });
+
+    it("sends a cancellation_notice even when the event is cancelled", async () => {
+      seedOutboxFor({ campaignId: "camp2" });
+      db.seed("staff_contact_methods", [
+        {
+          staff_member_id: "sm1",
+          channel: "sms",
+          normalized_value: "+14165550001",
+          value: "+14165550001",
+          status: "valid",
+          consent: "granted",
+          is_primary: true,
+        },
+      ]);
+      db.seed("invitation_campaigns", [
+        {
+          id: "camp2",
+          event_id: "evt2",
+          campaign_type: "cancellation_notice",
+        },
+      ]);
+      db.seed("events", [{ id: "evt2", status: "cancelled" }]);
+      const sms = vi.fn<(_: unknown) => Promise<SendResult>>(async () => ({
+        accepted: true,
+        providerMessageId: "SMcancel",
+      }));
+      mod.__setProvidersForTesting({
+        sendSms: sms as never,
+        sendEmail: vi.fn() as never,
+      });
+      const r = await mod.drainOutbox({ limit: 10 });
+      expect(sms).toHaveBeenCalledTimes(1);
+      expect(r.sent).toBe(1);
+    });
+  });
+
   it("ignores rows whose next_attempt_at is in the future", async () => {
     db.seed("message_outbox", [
       {

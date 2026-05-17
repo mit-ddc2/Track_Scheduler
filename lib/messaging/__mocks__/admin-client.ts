@@ -66,6 +66,13 @@ class MockTable {
     return new MockInsert(this.db, this.table, row);
   }
 
+  upsert(
+    row: Row | Row[],
+    opts?: { onConflict?: string; ignoreDuplicates?: boolean },
+  ) {
+    return new MockUpsert(this.db, this.table, row, opts);
+  }
+
   update(patch: Row) {
     return new MockUpdate(this.db, this.table, patch);
   }
@@ -185,6 +192,75 @@ class MockInsert {
             error: { code: "23505", message: "duplicate idempotency_key" },
           };
         }
+      }
+      const row = { id: cryptoId(), created_at: new Date().toISOString(), ...r };
+      list.push(row);
+      inserted.push(row);
+      this.db.inserts.push({ table: this.table, row });
+    }
+    return { data: inserted, error: null };
+  }
+
+  async single() {
+    const res = await this.commit();
+    if (res.error) return { data: null, error: res.error };
+    return { data: res.data[0] ?? null, error: null };
+  }
+
+  then<TResult>(onFulfilled: (v: { data: Row[] | null; error: unknown }) => TResult) {
+    return this.commit().then(onFulfilled);
+  }
+}
+
+class MockUpsert {
+  constructor(
+    private db: MockSupabase,
+    private table: string,
+    private rowOrRows: Row | Row[],
+    private opts?: { onConflict?: string; ignoreDuplicates?: boolean },
+  ) {}
+
+  private selectCols?: string;
+  select(cols = "*") {
+    this.selectCols = cols;
+    return this;
+  }
+
+  private async commit(): Promise<{
+    data: Row[];
+    error: null | { code: string; message: string };
+  }> {
+    const list = this.db.tables[this.table] ?? (this.db.tables[this.table] = []);
+    const toInsert = Array.isArray(this.rowOrRows)
+      ? this.rowOrRows
+      : [this.rowOrRows];
+    const conflictCols = (this.opts?.onConflict ?? "")
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+    const ignoreDuplicates = this.opts?.ignoreDuplicates === true;
+
+    const inserted: Row[] = [];
+    for (const r of toInsert) {
+      // Conflict detection on the configured columns.
+      let dupIndex = -1;
+      if (conflictCols.length > 0) {
+        dupIndex = list.findIndex((x) =>
+          conflictCols.every((c) => x[c] === r[c]),
+        );
+      }
+      if (dupIndex >= 0) {
+        if (ignoreDuplicates) {
+          // No-op: keep existing row, do not return it.
+          continue;
+        }
+        // Update existing row in-place.
+        const existing = list[dupIndex];
+        for (const k of Object.keys(r)) {
+          if (r[k] !== undefined) existing[k] = r[k] as unknown as never;
+        }
+        inserted.push(existing);
+        continue;
       }
       const row = { id: cryptoId(), created_at: new Date().toISOString(), ...r };
       list.push(row);

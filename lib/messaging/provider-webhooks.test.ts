@@ -117,7 +117,7 @@ describe("processTwilioStatusCallback", () => {
     expect(db.tables.message_outbox[0].status).toBe("sent");
   });
 
-  it("records a message_events row on duplicate delivery (idempotent insert)", async () => {
+  it("dedupes duplicate webhook deliveries into one message_events row", async () => {
     db.seed("message_outbox", [
       {
         id: "o1",
@@ -139,8 +139,10 @@ describe("processTwilioStatusCallback", () => {
       MessageSid: "SMxyz",
       MessageStatus: "delivered",
     });
-    // Two callbacks → two event rows recorded; outbox stays 'sent'.
-    expect(db.tables.message_events.length).toBe(2);
+    // The unique index on (provider, provider_message_id, event_type) plus
+    // upsert(ignoreDuplicates) collapses duplicate webhooks into a single
+    // event row. Outbox stays 'sent'.
+    expect(db.tables.message_events.length).toBe(1);
     expect(db.tables.message_outbox[0].status).toBe("sent");
   });
 });
