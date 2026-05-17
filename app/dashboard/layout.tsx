@@ -5,14 +5,11 @@ import { TopBar } from "@/components/dashboard/TopBar";
 import { requireOwner } from "@/lib/auth/require-owner";
 import { createClient as createServerClient } from "@/lib/db/supabase-server";
 
-// `requireOwner()` reads cookies, which forces dynamic rendering for every
-// request — fresh unread counts on each navigation come from that path, and
-// live updates come from the client-side Realtime subscription in
-// `NotificationBadge`. A `revalidate` value would be a no-op here, so we
-// don't set one.
-export const dynamic = "force-dynamic";
-
-// Reads request cookies via Supabase Auth — cannot be prerendered.
+// Reads request cookies via Supabase Auth — cannot be prerendered. Fresh
+// unread counts on each navigation come from the SSR fetch below; live
+// updates come from the client-side Realtime subscription in
+// `NotificationBadge`. A `revalidate` value would be a no-op (auth makes
+// the layout dynamic), so we don't set one.
 export const dynamic = "force-dynamic";
 
 export default async function DashboardLayout({
