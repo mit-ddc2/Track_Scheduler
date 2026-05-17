@@ -13,6 +13,8 @@ import Link from "next/link";
 
 import { Card } from "@/components/ui/Card";
 
+import { ResetDemoButton } from "./ResetDemoButton";
+
 type SettingsLink = {
   href: string;
   title: string;
@@ -81,6 +83,12 @@ const LINKS: SettingsLink[] = [
 ];
 
 export default function SettingsPage() {
+  // Server-side env read — `cronSecret` is only forwarded to the Client
+  // Component when the reset flow is enabled, so it never enters the bundle
+  // in production.
+  const resetEnabled = process.env.DEV_RESET_DEMO_ENABLED === "true";
+  const cronSecret = resetEnabled ? (process.env.CRON_SECRET ?? "") : "";
+
   return (
     <div
       style={{
@@ -172,6 +180,46 @@ export default function SettingsPage() {
           </div>
         ))}
       </Card>
+      {resetEnabled && cronSecret && (
+        <Card style={{ padding: 16, marginTop: 4 }}>
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 12,
+              marginBottom: 8,
+            }}
+          >
+            <span
+              className="mono"
+              style={{
+                fontSize: 9,
+                background: "color-mix(in srgb, var(--ok) 12%, transparent)",
+                color: "var(--ok)",
+                padding: "2px 6px",
+                borderRadius: 3,
+                letterSpacing: "0.06em",
+                textTransform: "uppercase",
+              }}
+            >
+              LIVE
+            </span>
+            <div style={{ fontWeight: 600, fontSize: 14 }}>Demo data</div>
+          </div>
+          <div
+            style={{
+              color: "var(--text-3)",
+              fontSize: 12,
+              marginBottom: 12,
+              lineHeight: 1.5,
+            }}
+          >
+            Wipe + re-seed the canonical 6-staff / 3-event fixture set. Use
+            after a customer demo to leave a clean trail.
+          </div>
+          <ResetDemoButton cronSecret={cronSecret} />
+        </Card>
+      )}
     </div>
   );
 }
