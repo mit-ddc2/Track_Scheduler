@@ -4,6 +4,9 @@ import { BottomNav, DeskRail } from "@/components/dashboard/DashboardNav";
 import { TopBar } from "@/components/dashboard/TopBar";
 import { requireOwner } from "@/lib/auth/require-owner";
 
+// Reads request cookies via Supabase Auth — cannot be prerendered.
+export const dynamic = "force-dynamic";
+
 export default async function DashboardLayout({
   children,
 }: {
