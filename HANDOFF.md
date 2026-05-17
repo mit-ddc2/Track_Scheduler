@@ -80,6 +80,8 @@ After clicking: 302 → `/dashboard`, auth cookie set on the domain.
 - **Performance + accessibility audit**: `PERFORMANCE_AND_A11Y_AUDIT.md` at repo root. All 3 HIGH perf + all 4 HIGH a11y findings **fixed** and merged (plus the MEDIUM dashboard parallelization + new index migration).
 - **Smoke test**: `bash scripts/smoke-test.sh` — 8 checks against the live URL. **Currently passing 8/8.**
 - **Routes built**: 35 (full route list visible in `pnpm build` output)
+- **Security hardening validated live**: open-redirect attempt to `?next=//evil.tld` AND `?next=https://evil.tld` both correctly rejected (redirect to `/login?error=callback` instead of off-site). Dev-login route 403s without the gating secret. CRON_SECRET-protected drain endpoint 401s without bearer token.
+- **Live messaging pipeline validated end-to-end**: real outbox-drain cycle persisted both a Resend email (provider id captured) and a mock SMS row (`mock_mpa7sh2z_ae1320`). Full RSVP loop (token → page → accept → 7 atomic DB writes) verified against production infrastructure.
 
 ## Repository state
 
