@@ -40,9 +40,16 @@ type OwnerLookupResult = {
 
 function wireAdmin({
   insertResult,
+  upsertResult,
+  upsertSpy,
   ownerLookupResult,
 }: {
-  insertResult: InsertResult;
+  insertResult?: InsertResult;
+  upsertResult?: InsertResult;
+  upsertSpy?: (
+    row: Record<string, unknown>,
+    options: { onConflict: string; ignoreDuplicates?: boolean },
+  ) => void;
   ownerLookupResult?: OwnerLookupResult;
 }) {
   adminFromMock.mockImplementation((table: string) => {
@@ -50,9 +57,28 @@ function wireAdmin({
       return {
         insert: () => ({
           select: () => ({
-            maybeSingle: vi.fn().mockResolvedValue(insertResult),
+            maybeSingle: vi
+              .fn()
+              .mockResolvedValue(
+                insertResult ?? { data: null, error: null },
+              ),
           }),
         }),
+        upsert: (
+          row: Record<string, unknown>,
+          options: { onConflict: string; ignoreDuplicates?: boolean },
+        ) => {
+          upsertSpy?.(row, options);
+          return {
+            select: () => ({
+              maybeSingle: vi
+                .fn()
+                .mockResolvedValue(
+                  upsertResult ?? { data: null, error: null },
+                ),
+            }),
+          };
+        },
       };
     }
     if (table === "profiles") {
@@ -118,11 +144,12 @@ describe("createManagerNotification", () => {
   });
 
   it("returns created=false when the unique dedupe constraint fires", async () => {
+    const upsertSpy = vi.fn();
     wireAdmin({
-      insertResult: {
-        data: null,
-        error: { code: "23505", message: "duplicate key value" },
-      },
+      // PostgREST returns `data: null` with no error when
+      // `ignoreDuplicates: true` swallows an ON CONFLICT DO NOTHING row.
+      upsertResult: { data: null, error: null },
+      upsertSpy,
     });
 
     const { createManagerNotification } = await import(
@@ -137,6 +164,45 @@ describe("createManagerNotification", () => {
 
     expect(result.created).toBe(false);
     expect(result.notification).toBeNull();
+    // The dedupe path must hit upsert with the narrow conflict target so
+    // *only* duplicates on (profile_id, dedupe_key) are swallowed.
+    expect(upsertSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        profile_id: "p1",
+        dedupe_key: "responder:accept:abc",
+      }),
+      { onConflict: "profile_id,dedupe_key", ignoreDuplicates: true },
+    );
+  });
+
+  it("surfaces unique-violation errors from constraints other than the dedupe target", async () => {
+    // Simulate a hypothetical future unique constraint firing on something
+    // OTHER than (profile_id, dedupe_key). Because `onConflict` is pinned to
+    // the dedupe target, PostgREST will not swallow this — the error must
+    // bubble out instead of being masked as `created: false`.
+    wireAdmin({
+      upsertResult: {
+        data: null,
+        error: {
+          code: "23505",
+          message:
+            'duplicate key value violates unique constraint "manager_notifications_some_other_unique_idx"',
+        },
+      },
+    });
+
+    const { createManagerNotification } = await import(
+      "./create-manager-notification"
+    );
+
+    await expect(
+      createManagerNotification({
+        profileId: "p1",
+        eventType: "responder.accepted",
+        title: "Marc accepted",
+        dedupeKey: "responder:accept:abc",
+      }),
+    ).rejects.toThrow(/insert failed/);
   });
 
   it("throws when eventType is missing", async () => {

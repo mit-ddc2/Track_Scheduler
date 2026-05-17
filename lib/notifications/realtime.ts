@@ -19,6 +19,22 @@ export type SubscribeOptions = {
   onStatus?: (status: SubscriptionStatus) => void;
 };
 
+type SharedChannelEntry = {
+  /** The underlying Supabase channel (typed loosely; see `.on` cast below). */
+  channel: { unsubscribe?: () => void };
+  /** Last status from `.subscribe()` so late joiners can be notified. */
+  lastStatus: SubscriptionStatus;
+  /** All currently-mounted subscribers for this topic. */
+  listeners: Set<SubscribeOptions>;
+};
+
+// Module-level cache: every browser-side caller asking for the same
+// `profileId` topic now joins the same realtime channel and shares its
+// websocket broadcast. The first subscriber opens the channel; the last
+// subscriber to leave tears it down. This prevents the two-channel
+// duplication that `NotificationBadge` + `NotificationsLive` were causing.
+const sharedChannels = new Map<string, SharedChannelEntry>();
+
 /**
  * Subscribe to realtime changes on `manager_notifications` for the given
  * owner profile_id. The publication is already RLS-filtered server-side so
@@ -32,13 +48,74 @@ export function subscribeToNotifications(
   profileId: string,
   options: SubscribeOptions,
 ): () => void {
-  const supabase = createBrowserClient();
-  const { onEvent, onStatus } = options;
+  const topic = `manager_notifications:profile=${profileId}`;
+  const { onStatus } = options;
 
-  onStatus?.("connecting");
+  let entry = sharedChannels.get(topic);
+
+  if (!entry) {
+    entry = createSharedChannel(topic, profileId);
+    sharedChannels.set(topic, entry);
+  }
+
+  entry.listeners.add(options);
+
+  // Surface the current status immediately so late joiners don't sit in
+  // `connecting` forever after the channel has already settled.
+  onStatus?.(entry.lastStatus);
+
+  return () => {
+    const current = sharedChannels.get(topic);
+    if (!current) return;
+    current.listeners.delete(options);
+    if (current.listeners.size === 0) {
+      sharedChannels.delete(topic);
+      try {
+        current.channel.unsubscribe?.();
+      } catch {
+        // Best effort — already torn down.
+      }
+    }
+  };
+}
+
+function createSharedChannel(
+  topic: string,
+  profileId: string,
+): SharedChannelEntry {
+  const supabase = createBrowserClient();
+
+  const entry: SharedChannelEntry = {
+    channel: { unsubscribe: undefined },
+    lastStatus: "connecting",
+    listeners: new Set(),
+  };
+
+  const broadcastEvent = (event: NotificationEvent) => {
+    // Iterate over a snapshot so listeners removing themselves mid-callback
+    // doesn't perturb the iteration order.
+    for (const listener of Array.from(entry.listeners)) {
+      try {
+        listener.onEvent(event);
+      } catch {
+        // A misbehaving listener shouldn't poison the rest of the fanout.
+      }
+    }
+  };
+
+  const broadcastStatus = (status: SubscriptionStatus) => {
+    entry.lastStatus = status;
+    for (const listener of Array.from(entry.listeners)) {
+      try {
+        listener.onStatus?.(status);
+      } catch {
+        // Same defence as above.
+      }
+    }
+  };
 
   const channel = supabase
-    .channel(`manager_notifications:profile=${profileId}`)
+    .channel(topic)
     .on(
       // @ts-expect-error — postgres_changes is typed via realtime-js, the
       // SSR client re-exports a narrower surface but the helper is supported.
@@ -55,14 +132,14 @@ export function subscribeToNotifications(
         old: ManagerNotification | Record<string, never>;
       }) => {
         if (payload.eventType === "INSERT") {
-          onEvent({
+          broadcastEvent({
             type: "INSERT",
             notification: payload.new as ManagerNotification,
           });
           return;
         }
         if (payload.eventType === "UPDATE") {
-          onEvent({
+          broadcastEvent({
             type: "UPDATE",
             notification: payload.new as ManagerNotification,
           });
@@ -71,23 +148,27 @@ export function subscribeToNotifications(
         if (payload.eventType === "DELETE") {
           const id =
             (payload.old as ManagerNotification | undefined)?.id ?? "";
-          if (id) onEvent({ type: "DELETE", notification: { id } });
+          if (id) broadcastEvent({ type: "DELETE", notification: { id } });
         }
       },
     )
     .subscribe((status: string) => {
       // Supabase realtime status values: SUBSCRIBED | TIMED_OUT | CLOSED | CHANNEL_ERROR
-      if (status === "SUBSCRIBED") onStatus?.("subscribed");
-      else if (status === "CLOSED") onStatus?.("closed");
+      if (status === "SUBSCRIBED") broadcastStatus("subscribed");
+      else if (status === "CLOSED") broadcastStatus("closed");
       else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT")
-        onStatus?.("error");
+        broadcastStatus("error");
     });
 
-  return () => {
-    try {
-      supabase.removeChannel(channel);
-    } catch {
-      // Best effort — already torn down.
-    }
+  entry.channel = {
+    unsubscribe: () => {
+      try {
+        supabase.removeChannel(channel);
+      } catch {
+        // Best effort.
+      }
+    },
   };
+
+  return entry;
 }

@@ -5,11 +5,12 @@ import { TopBar } from "@/components/dashboard/TopBar";
 import { requireOwner } from "@/lib/auth/require-owner";
 import { createClient as createServerClient } from "@/lib/db/supabase-server";
 
-// The unread count is mildly stale-tolerant — the client-side
-// NotificationBadge re-fetches and subscribes to Realtime, so the SSR value
-// only needs to be roughly correct on first paint. Re-render every 30s for
-// users without a live socket.
-export const revalidate = 30;
+// `requireOwner()` reads cookies, which forces dynamic rendering for every
+// request — fresh unread counts on each navigation come from that path, and
+// live updates come from the client-side Realtime subscription in
+// `NotificationBadge`. A `revalidate` value would be a no-op here, so we
+// don't set one.
+export const dynamic = "force-dynamic";
 
 // Reads request cookies via Supabase Auth — cannot be prerendered.
 export const dynamic = "force-dynamic";

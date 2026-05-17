@@ -16,10 +16,29 @@ import type {
 
 import { getEventTypeDefinition } from "./event-types";
 
-/** Generic interface so we can plug either the admin or RLS-scoped client. */
+/**
+ * Generic interface so we can plug either the admin or RLS-scoped client.
+ *
+ * NOTE: This hand-rolled shape will be replaced with
+ * `SupabaseClient<Database>` once `audit_log` and the other Phase 3 tables
+ * are added to `lib/db/types.ts`. Until then, casting the real client into
+ * this minimal surface keeps the writer typed without requiring `as never`
+ * on every call site.
+ */
 type WriterClient = {
   from: (table: "manager_notifications" | "profiles") => {
     insert: (row: Record<string, unknown>) => {
+      select: (columns?: string) => {
+        maybeSingle: () => Promise<{
+          data: ManagerNotification | null;
+          error: { code?: string; message: string } | null;
+        }>;
+      };
+    };
+    upsert: (
+      row: Record<string, unknown>,
+      options: { onConflict: string; ignoreDuplicates?: boolean },
+    ) => {
       select: (columns?: string) => {
         maybeSingle: () => Promise<{
           data: ManagerNotification | null;
@@ -79,9 +98,13 @@ export type CreateManagerNotificationResult = {
  *   (Twilio/Google webhooks, cron jobs) can write. Falls back to the
  *   request-scoped server client when SUPABASE_SECRET_KEY is unset — only
  *   useful while an owner session is present (RLS allows owner inserts).
- * - When `dedupeKey` is supplied, relies on the unique index
- *   `(profile_id, dedupe_key)` to swallow the second write. We detect that
- *   case by checking error code `23505` and return `created: false`.
+ * - When `dedupeKey` is supplied, the write is performed as a PostgREST
+ *   `upsert` with `onConflict: "profile_id,dedupe_key"` and
+ *   `ignoreDuplicates: true`. PostgREST translates this to
+ *   `INSERT ... ON CONFLICT (profile_id, dedupe_key) DO NOTHING`. On a
+ *   duplicate the server returns no row, so we surface `created: false`.
+ *   This narrows the swallowed-conflict surface to the dedupe constraint
+ *   only — unique violations on any other column will surface as errors.
  * - When `profileId` is omitted, looks up the single active owner.
  *
  * Throws `Error` for programmer mistakes (missing severity, missing event
@@ -134,22 +157,37 @@ export async function createManagerNotification(
     dedupe_key: input.dedupeKey ?? null,
   };
 
-  const { data, error } = await client
-    .from("manager_notifications")
-    .insert(row)
-    .select(
-      "id, profile_id, severity, status, event_type, title, body, event_id, staff_member_id, related_entity_type, related_entity_id, dedupe_key, created_at, read_at",
-    )
-    .maybeSingle();
+  const columns =
+    "id, profile_id, severity, status, event_type, title, body, event_id, staff_member_id, related_entity_type, related_entity_id, dedupe_key, created_at, read_at";
+
+  // When a dedupeKey is supplied we route through `upsert` with
+  // `ignoreDuplicates: true` and `onConflict` pinned to the
+  // `(profile_id, dedupe_key)` unique index. PostgREST emits
+  // `INSERT ... ON CONFLICT (profile_id, dedupe_key) DO NOTHING` so the
+  // server *only* swallows conflicts on that exact target — any other
+  // unique-violation (e.g. a future constraint we add) will still surface
+  // as a normal Supabase error and bubble out below.
+  //
+  // On a swallowed duplicate Supabase returns `data === null` with no
+  // error; we translate that into `{ created: false }`.
+  const builder = input.dedupeKey
+    ? client.from("manager_notifications").upsert(row, {
+        onConflict: "profile_id,dedupe_key",
+        ignoreDuplicates: true,
+      })
+    : client.from("manager_notifications").insert(row);
+
+  const { data, error } = await builder.select(columns).maybeSingle();
 
   if (error) {
-    // Postgres unique_violation — dedupe hit.
-    if (error.code === "23505" && input.dedupeKey) {
-      return { created: false, notification: null };
-    }
     throw new Error(
       `createManagerNotification: insert failed — ${error.message}`,
     );
+  }
+
+  // Upsert with ignoreDuplicates returns `null` on dedupe hit.
+  if (input.dedupeKey && !data) {
+    return { created: false, notification: null };
   }
 
   return { created: true, notification: data ?? null };
