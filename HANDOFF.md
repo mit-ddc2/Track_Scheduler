@@ -2,6 +2,14 @@
 
 _Read this first when you return to your laptop. End of the autonomous run._
 
+## 🎯 Action items when you return (5-minute checklist)
+
+1. **Check your inbox** at `mit@ddc2.com` for two emails from `onboarding@resend.dev` — confirms the production email pipeline works.
+2. **Click the dev-login URL** (in §"Demo URL + dev-login" below) — confirms the app loads, seeded data renders, dashboard is demo-ready.
+3. **Read this whole doc** (you're 2 minutes in already). It covers what runs, what's not done, and what decisions you need to make.
+4. **Skim `DEMO_SCRIPT.md`** for the 8-minute end-of-day demo walkthrough.
+5. **Decide on Twilio**: see "What's NOT done" — for the demo, mock SMS is fine; for real production you need a Twilio phone number.
+
 ## TL;DR — what works right now
 
 Open https://track-scheduler.vercel.app — sign in via dev-login URL (below). The app is fully functional for an email-only demo:
