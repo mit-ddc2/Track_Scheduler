@@ -49,23 +49,26 @@ const LINKS: SettingsLink[] = [
   {
     href: "/dashboard/settings/exports",
     title: "Exports",
-    description: "Bulk exports for roster, attendance, audit.",
+    description:
+      "Download roster + per-event payroll CSV files. Formula-injection-safe.",
     icon: Download,
-    badge: "v1.1",
+    badge: "LIVE",
   },
   {
     href: "/dashboard/settings/consent",
     title: "Consent & opt-outs",
-    description: "Per-channel consent records and suppression list.",
+    description:
+      "Per-channel consent + suppression status, with full consent history.",
     icon: ShieldCheck,
-    badge: "v1.1",
+    badge: "LIVE",
   },
   {
     href: "/dashboard/settings/audit",
     title: "Audit log",
-    description: "Searchable activity log of every owner action.",
+    description:
+      "Filterable activity log of every owner, system, and responder action.",
     icon: History,
-    badge: "v1.1",
+    badge: "LIVE",
   },
 ];
 
