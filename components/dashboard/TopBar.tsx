@@ -1,11 +1,13 @@
-import { Bell } from "lucide-react";
+import { NotificationBadge } from "@/components/notifications/NotificationBadge";
 
 type TopBarProps = {
   displayName: string;
+  profileId: string;
+  unreadCount: number;
 };
 
 /** Persistent header bar across all dashboard routes. */
-export function TopBar({ displayName }: TopBarProps) {
+export function TopBar({ displayName, profileId, unreadCount }: TopBarProps) {
   return (
     <header
       style={{
@@ -43,25 +45,10 @@ export function TopBar({ displayName }: TopBarProps) {
           </div>
         </div>
         <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-          <button
-            type="button"
-            aria-label="Notifications"
-            style={{
-              width: 36,
-              height: 36,
-              display: "inline-flex",
-              alignItems: "center",
-              justifyContent: "center",
-              borderRadius: 4,
-              background: "transparent",
-              border: "1px solid var(--line)",
-              color: "var(--text)",
-              cursor: "pointer",
-              position: "relative",
-            }}
-          >
-            <Bell size={16} strokeWidth={1.6} />
-          </button>
+          <NotificationBadge
+            profileId={profileId}
+            initialCount={unreadCount}
+          />
         </div>
       </div>
     </header>
