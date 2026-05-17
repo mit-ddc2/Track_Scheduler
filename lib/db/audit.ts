@@ -29,7 +29,7 @@ export async function writeAudit(entry: AuditEntry): Promise<void> {
 
   try {
     const admin = createAdminClient();
-    const { error } = await admin.from("audit_log" as never).insert({
+    const { error } = await admin.from("audit_log").insert({
       action: entry.action,
       entity_type: entry.entity_type,
       entity_id: entry.entity_id,
@@ -37,8 +37,10 @@ export async function writeAudit(entry: AuditEntry): Promise<void> {
       before: entry.before ?? null,
       after: entry.after ?? null,
       actor_type: actorType,
-      actor_id: entry.actorId ?? null,
-    } as never);
+      // Column name per schema is actor_user_id — see
+      // supabase/migrations/0001_initial_schema.sql.
+      actor_user_id: entry.actorId ?? null,
+    });
     if (error) {
       console.warn("[audit] insert failed:", error.message, entry);
     }

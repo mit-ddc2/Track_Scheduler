@@ -46,7 +46,7 @@ beforeEach(() => {
   requireOwnerMock.mockResolvedValue({
     user: { id: "u1" },
     profile: {
-      id: "11111111-1111-1111-1111-111111111111",
+      id: "11111111-1111-4111-8111-111111111111",
       is_owner: true,
       is_active: true,
       display_name: "Robert",
@@ -83,14 +83,14 @@ describe("markNotificationRead", () => {
     });
     const { markNotificationRead } = await import("./actions");
     await expect(
-      markNotificationRead("11111111-1111-1111-1111-111111111111"),
+      markNotificationRead("11111111-1111-4111-8111-111111111111"),
     ).rejects.toThrowError("__REDIRECT__:/login");
   });
 
   it("writes the update when input is valid", async () => {
     const { markNotificationRead } = await import("./actions");
     const result = await markNotificationRead(
-      "11111111-1111-1111-1111-111111111111",
+      "11111111-1111-4111-8111-111111111111",
     );
     expect(result).toEqual({ ok: true });
     expect(updateMock).toHaveBeenCalledWith(
@@ -113,7 +113,7 @@ describe("archiveNotification", () => {
     });
     const { archiveNotification } = await import("./actions");
     await expect(
-      archiveNotification("11111111-1111-1111-1111-111111111111"),
+      archiveNotification("11111111-1111-4111-8111-111111111111"),
     ).rejects.toThrowError("__REDIRECT__:/login");
   });
 });
@@ -141,7 +141,7 @@ describe("updateNotificationPreferences", () => {
   it("passes validated input to the upsert helper and writes an audit row", async () => {
     upsertPreferenceMock.mockResolvedValue({
       id: "pref-1",
-      profile_id: "11111111-1111-1111-1111-111111111111",
+      profile_id: "11111111-1111-4111-8111-111111111111",
       event_type: "responder.cancelled",
       in_app_enabled: true,
       email_enabled: true,
@@ -164,7 +164,7 @@ describe("updateNotificationPreferences", () => {
 
     expect(result).toEqual({ ok: true });
     expect(upsertPreferenceMock).toHaveBeenCalledWith(
-      "11111111-1111-1111-1111-111111111111",
+      "11111111-1111-4111-8111-111111111111",
       "responder.cancelled",
       expect.objectContaining({ email_enabled: true }),
     );
