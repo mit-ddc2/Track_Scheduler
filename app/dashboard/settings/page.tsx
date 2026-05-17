@@ -5,6 +5,7 @@ import {
   ChevronRight,
   Download,
   History,
+  MessageSquare,
   ShieldCheck,
   Users,
 } from "lucide-react";
@@ -69,6 +70,13 @@ const LINKS: SettingsLink[] = [
       "Filterable activity log of every owner, system, and responder action.",
     icon: History,
     badge: "LIVE",
+  },
+  {
+    href: "/dashboard/mock-sms",
+    title: "Mock SMS log (dev)",
+    description: "Outgoing SMS captured by the mock provider for E2E + dev.",
+    icon: MessageSquare,
+    badge: "DEV",
   },
 ];
 
