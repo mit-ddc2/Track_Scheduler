@@ -1,9 +1,10 @@
 /**
- * Database typings — hand-rolled subset for Phase 1.
+ * Database typings — hand-rolled subset.
  *
  * The full `Database` type will be replaced with `supabase gen types typescript`
- * output once we wire up CI for it (Phase 5+). For now we keep just what auth
- * and the dashboard shell touch so RLS-aware client calls are type-checked.
+ * output once we wire up CI for it. For now we keep just what auth, the
+ * dashboard shell, events, and notifications touch so RLS-aware client calls
+ * are type-checked.
  */
 
 export type Profile = {
@@ -23,6 +24,89 @@ export type ProfileInsert = Omit<Profile, "created_at" | "updated_at"> & {
 };
 
 export type ProfileUpdate = Partial<Omit<Profile, "id" | "created_at">>;
+
+// ─── Events ──────────────────────────────────────────────────────────────
+
+export type EventStatus =
+  | "draft"
+  | "scheduled"
+  | "inviting"
+  | "underfilled"
+  | "staffed"
+  | "needs_review"
+  | "locked"
+  | "completed"
+  | "cancelled";
+
+export type EventSourceType = "manual" | "google_calendar" | "ics_feed";
+
+export type EventRow = {
+  id: string;
+  title: string;
+  description: string | null;
+  event_type: string | null;
+  starts_at: string;
+  ends_at: string;
+  timezone: string;
+  location: string | null;
+  status: EventStatus;
+  source_type: EventSourceType;
+  calendar_source_id: string | null;
+  source_event_id: string | null;
+  source_etag: string | null;
+  source_updated_at: string | null;
+  last_source_seen_at: string | null;
+  source_hash: string | null;
+  review_required: boolean;
+  required_headcount: number;
+  overbooking_policy: string;
+  manager_notes: string | null;
+  created_by: string | null;
+  updated_by: string | null;
+  created_at: string;
+  updated_at: string;
+  cancelled_at: string | null;
+  completed_at: string | null;
+};
+
+export type EventInsert = {
+  title: string;
+  description?: string | null;
+  event_type?: string | null;
+  starts_at: string;
+  ends_at: string;
+  timezone?: string;
+  location?: string | null;
+  status?: EventStatus;
+  source_type?: EventSourceType;
+  required_headcount?: number;
+  overbooking_policy?: string;
+  manager_notes?: string | null;
+  created_by?: string | null;
+  updated_by?: string | null;
+};
+
+export type EventUpdate = Partial<
+  Omit<EventRow, "id" | "created_at" | "updated_at">
+>;
+
+export type EventRequirementRow = {
+  id: string;
+  event_id: string;
+  label: string;
+  required_count: number;
+  role_id: string | null;
+  qualification_id: string | null;
+  notes: string | null;
+  created_at: string;
+};
+
+export type EventRequirementInsert = Omit<EventRequirementRow, "id" | "created_at"> & {
+  id?: string;
+  created_at?: string;
+};
+
+// ─── Notifications ───────────────────────────────────────────────────────
 
 export type NotificationSeverity = "info" | "warning" | "urgent";
 export type NotificationStatus = "unread" | "read" | "archived";
@@ -99,6 +183,39 @@ export type NotificationPreferenceUpdate = Partial<
   Omit<NotificationPreference, "id" | "profile_id" | "created_at">
 >;
 
+// ─── Audit log ───────────────────────────────────────────────────────────
+// Mirrors the `audit_log` table from supabase/migrations/0001_initial_schema.sql.
+// IMPORTANT: the column is `actor_user_id`, not `actor_id`. A mistake here
+// would silently 500 every audit insert once SUPABASE_SECRET_KEY is set.
+
+export type AuditLogRow = {
+  id: string;
+  actor_user_id: string | null;
+  actor_type: string;
+  action: string;
+  entity_type: string;
+  entity_id: string | null;
+  summary: string | null;
+  before: unknown;
+  after: unknown;
+  request_id: string | null;
+  created_at: string;
+};
+
+export type AuditLogInsert = {
+  id?: string;
+  actor_user_id?: string | null;
+  actor_type?: string;
+  action: string;
+  entity_type: string;
+  entity_id?: string | null;
+  summary?: string | null;
+  before?: unknown;
+  after?: unknown;
+  request_id?: string | null;
+  created_at?: string;
+};
+
 export type Database = {
   public: {
     Tables: {
@@ -106,6 +223,18 @@ export type Database = {
         Row: Profile;
         Insert: ProfileInsert;
         Update: ProfileUpdate;
+        Relationships: [];
+      };
+      events: {
+        Row: EventRow;
+        Insert: EventInsert;
+        Update: EventUpdate;
+        Relationships: [];
+      };
+      event_requirements: {
+        Row: EventRequirementRow;
+        Insert: EventRequirementInsert;
+        Update: Partial<EventRequirementRow>;
         Relationships: [];
       };
       manager_notifications: {
@@ -120,12 +249,26 @@ export type Database = {
         Update: NotificationPreferenceUpdate;
         Relationships: [];
       };
+      audit_log: {
+        Row: AuditLogRow;
+        Insert: AuditLogInsert;
+        Update: Partial<AuditLogRow>;
+        Relationships: [];
+      };
     };
     Views: Record<string, never>;
-    Functions: Record<string, never>;
+    Functions: {
+      set_event_requirements_tx: {
+        Args: { p_event_id: string; p_requirements: unknown };
+        Returns: void;
+      };
+    };
     Enums: {
+      event_status: EventStatus;
+      event_source_type: EventSourceType;
       notification_severity: NotificationSeverity;
       notification_status: NotificationStatus;
     };
+    CompositeTypes: Record<string, never>;
   };
 };
