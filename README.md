@@ -29,6 +29,16 @@ To learn more about Next.js, take a look at the following resources:
 
 You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
 
+## Cron jobs (Hobby-plan note)
+
+`vercel.json` defines a per-minute cron at `/api/jobs/drain-outbox`
+(`* * * * *`). Per-minute schedules require a **Pro** plan or higher — on
+the **Hobby** plan, Vercel rejects sub-hourly cron schedules. Until the
+project is upgraded, drop the schedule frequency (e.g. `*/10 * * * *` for
+every 10 minutes, or `0 * * * *` for hourly) or trigger the drain from an
+external scheduler (cron-job.org, GitHub Actions, etc.) hitting the same
+endpoint with the configured auth header.
+
 ## Deploy on Vercel
 
 The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.

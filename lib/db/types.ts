@@ -3,8 +3,8 @@
  *
  * The full `Database` type will be replaced with `supabase gen types typescript`
  * output once we wire up CI for it. For now we keep just what auth, events,
- * notifications, audit, and roster touch so RLS-aware client calls are
- * type-checked.
+ * notifications, audit, roster, and messaging touch so RLS-aware client calls
+ * are type-checked.
  */
 
 // ─── Enums shared across the app ─────────────────────────────────────────
@@ -40,7 +40,7 @@ export type ProfileInsert = Omit<Profile, "created_at" | "updated_at"> & {
 
 export type ProfileUpdate = Partial<Omit<Profile, "id" | "created_at">>;
 
-// ─── Roster: crew_roles, qualifications, staff_members + relations ──────
+// ─── Roster ──────────────────────────────────────────────────────────────
 
 export type CrewRole = {
   id: string;
@@ -312,6 +312,8 @@ export type NotificationPreferenceUpdate = Partial<
 >;
 
 // ─── Audit log ───────────────────────────────────────────────────────────
+// Mirrors the `audit_log` table from supabase/migrations/0001_initial_schema.sql.
+// IMPORTANT: the column is `actor_user_id`, not `actor_id`.
 
 export type AuditLogRow = {
   id: string;
@@ -339,6 +341,91 @@ export type AuditLogInsert = {
   after?: unknown;
   request_id?: string | null;
   created_at?: string;
+};
+
+// ─── Messaging ───────────────────────────────────────────────────────────
+
+export type OutboxStatus =
+  | "pending"
+  | "sending"
+  | "sent"
+  | "failed"
+  | "cancelled";
+
+export type InviteStatus =
+  | "created"
+  | "invited"
+  | "accepted"
+  | "declined"
+  | "cancelled_by_member"
+  | "cancelled_by_manager"
+  | "availability_updated"
+  | "expired"
+  | "waitlisted";
+
+export type MessageOutboxRow = {
+  id: string;
+  campaign_id: string | null;
+  invite_id: string | null;
+  manager_notification_id: string | null;
+  staff_member_id: string | null;
+  channel: ContactChannel;
+  to_value: string;
+  subject: string | null;
+  body_text: string;
+  body_html: string | null;
+  provider: string;
+  provider_message_id: string | null;
+  idempotency_key: string;
+  status: OutboxStatus;
+  attempt_count: number;
+  last_attempt_at: string | null;
+  next_attempt_at: string | null;
+  error_code: string | null;
+  error_message: string | null;
+  created_at: string;
+  sent_at: string | null;
+};
+
+export type MessageOutboxInsert = Partial<MessageOutboxRow> & {
+  channel: ContactChannel;
+  to_value: string;
+  body_text: string;
+  provider: string;
+  idempotency_key: string;
+};
+
+export type MessageOutboxUpdate = Partial<Omit<MessageOutboxRow, "id">>;
+
+export type MessageEventRow = {
+  id: string;
+  message_outbox_id: string | null;
+  provider: string;
+  provider_message_id: string | null;
+  event_type: string;
+  payload: Record<string, unknown>;
+  received_at: string;
+};
+
+export type MessageEventInsert = Partial<MessageEventRow> & {
+  provider: string;
+  event_type: string;
+};
+
+export type RsvpTokenRow = {
+  id: string;
+  invite_id: string;
+  token_hash: string;
+  expires_at: string;
+  used_at: string | null;
+  created_at: string;
+};
+
+export type RsvpTokenInsert = {
+  invite_id: string;
+  token_hash: string;
+  expires_at: string;
+  used_at?: string | null;
 };
 
 type Rel = [];
@@ -494,6 +581,24 @@ export type Database = {
         Update: Partial<AuditLogRow>;
         Relationships: Rel;
       };
+      message_outbox: {
+        Row: MessageOutboxRow;
+        Insert: MessageOutboxInsert;
+        Update: MessageOutboxUpdate;
+        Relationships: Rel;
+      };
+      message_events: {
+        Row: MessageEventRow;
+        Insert: MessageEventInsert;
+        Update: Partial<MessageEventRow>;
+        Relationships: Rel;
+      };
+      rsvp_tokens: {
+        Row: RsvpTokenRow;
+        Insert: RsvpTokenInsert;
+        Update: Partial<RsvpTokenRow>;
+        Relationships: Rel;
+      };
     };
     Views: Record<string, never>;
     Functions: {
@@ -521,6 +626,8 @@ export type Database = {
       event_source_type: EventSourceType;
       notification_severity: NotificationSeverity;
       notification_status: NotificationStatus;
+      outbox_status: OutboxStatus;
+      invite_status: InviteStatus;
     };
     CompositeTypes: Record<string, never>;
   };
