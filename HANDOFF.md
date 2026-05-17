@@ -8,6 +8,7 @@ Open https://track-scheduler.vercel.app — sign in via dev-login URL (below). T
 - Add staff, create events, send invites (real email via Resend + mock SMS), receive RSVP links, accept via the public RSVP page, watch the dashboard update via Realtime, mark attendance, export payroll CSV.
 - Mock SMS path is on — SMS gets a synthetic `mock_...` ID, the row is marked `sent`, the dashboard reflects it. View any mock SMS at `/dashboard/mock-sms`.
 - Real Resend email delivery confirmed: a test email was sent from the autonomous run to `mit@ddc2.com` (subject "Calabogie Safety — Test email from autonomous deploy") — should be in your inbox.
+- **Live DB is pre-seeded with 6 sample staff members (Robert, Mithun, Marc, Sara, Devon, Aicha) + 3 sample events from the spec (Multimatic staffed, AISA underfilled, Enduro inviting) + 11 invites + 7 confirmed assignments + 8 structured requirements + 13 qualification assignments.** The dashboard is not empty — it shows the AISA underfilled spotlight, the Multimatic staffed event, and the Enduro inviting event. Use the demo flow as-is or wipe via Supabase SQL editor (`truncate ... cascade`).
 
 ## Demo URL + dev-login
 
