@@ -4,6 +4,7 @@ import { RsvpForm } from "@/components/rsvp/RsvpForm";
 import { RsvpExpired } from "@/components/rsvp/RsvpExpired";
 import { createAdminClient } from "@/lib/db/supabase-admin";
 import { computeCoverage } from "@/lib/events/coverage";
+import { getOwnerContact } from "@/lib/utils/contact";
 
 import { submitRsvpResponse } from "./actions";
 import { loadInviteByTokenImpl as loadInviteByToken } from "./rsvp-handler";
@@ -284,6 +285,7 @@ export default async function RsvpPage({ params }: PageProps) {
             responderName={staff.display_name}
             expiresAt={loaded.invite.expires_at}
             submitAction={submitRsvpResponse}
+            contact={getOwnerContact()}
           />
         </div>
       </div>

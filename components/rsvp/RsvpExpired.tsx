@@ -1,3 +1,5 @@
+import { getOwnerContact } from "@/lib/utils/contact";
+
 export type RsvpExpiredProps = {
   reason: "invalid" | "expired" | "used";
 };
@@ -26,6 +28,7 @@ const COPY: Record<
 /** Friendly catch-all for any unusable RSVP token (spec §16.11). */
 export function RsvpExpired({ reason }: RsvpExpiredProps) {
   const c = COPY[reason];
+  const contact = getOwnerContact();
   return (
     <div
       style={{
@@ -58,17 +61,30 @@ export function RsvpExpired({ reason }: RsvpExpiredProps) {
       >
         {c.body}
       </p>
-      <a
-        className="mono"
-        href="tel:+16135550142"
-        style={{
-          fontSize: 12,
-          color: "var(--accent)",
-          letterSpacing: "0.06em",
-        }}
-      >
-        CALL ROBERT · +1 613-555-0142
-      </a>
+      {contact.href ? (
+        <a
+          className="mono"
+          href={`tel:${contact.href}`}
+          style={{
+            fontSize: 12,
+            color: "var(--accent)",
+            letterSpacing: "0.06em",
+          }}
+        >
+          CALL · {contact.label.toUpperCase()}
+        </a>
+      ) : (
+        <span
+          className="mono"
+          style={{
+            fontSize: 12,
+            color: "#888",
+            letterSpacing: "0.06em",
+          }}
+        >
+          {contact.label.toUpperCase()}
+        </span>
+      )}
     </div>
   );
 }
