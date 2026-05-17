@@ -1,14 +1,20 @@
 import { z } from "zod";
 
 /**
- * Event create/update + requirement schemas (Phase 3).
+ * Domain-wide Zod schemas. Server actions and form code share these so
+ * validation, types, and error messages stay in lock-step.
  *
- * Mirrors the constraints on the `events` and `event_requirements` tables in
- * `supabase/migrations/0001_initial_schema.sql` so the server action layer can
- * reject bad input before touching the DB.
+ * Sections:
+ *   - Events (create/update/requirements/cancel) — Phase 3
+ *   - Staff/roster + roles + qualifications + CSV import — Phase 2
  */
 
-export const OVERBOOKING_POLICIES = ["allow_all", "waitlist_after_requirement"] as const;
+// ─── Events ──────────────────────────────────────────────────────────────
+
+export const OVERBOOKING_POLICIES = [
+  "allow_all",
+  "waitlist_after_requirement",
+] as const;
 
 export type OverbookingPolicy = (typeof OVERBOOKING_POLICIES)[number];
 
@@ -105,3 +111,152 @@ export const cancelEventSchema = z.object({
 });
 
 export type CancelEventInput = z.infer<typeof cancelEventSchema>;
+
+// ─── Roster / staff / roles / qualifications / CSV ───────────────────────
+
+export const preferredContactSchema = z.enum([
+  "sms",
+  "email",
+  "both",
+  "manual_only",
+]);
+export type PreferredContact = z.infer<typeof preferredContactSchema>;
+
+export const consentSourceSchema = z.enum([
+  "verbal",
+  "web_form",
+  "import",
+  "manual",
+]);
+export type ConsentSource = z.infer<typeof consentSourceSchema>;
+
+/** Allow up to 32-byte phone strings; we normalize to E.164 elsewhere. */
+const phoneInputSchema = z
+  .string()
+  .max(32, { message: "Phone is too long" })
+  .or(z.literal(""))
+  .optional()
+  .nullable();
+
+/** Liberal email shape — strict validation happens via normalize-contact. */
+const emailInputSchema = z
+  .string()
+  .max(254, { message: "Email is too long" })
+  .or(z.literal(""))
+  .optional()
+  .nullable();
+
+/** Shared object shape so create + update can both extend it. */
+const staffMemberObjectSchema = z.object({
+  display_name: z
+    .string()
+    .trim()
+    .min(1, { message: "Display name is required" })
+    .max(80, { message: "Display name is too long" }),
+  first_name: z.string().trim().max(40).optional().nullable(),
+  last_name: z.string().trim().max(40).optional().nullable(),
+  phone: phoneInputSchema,
+  email: emailInputSchema,
+  preferred_contact: preferredContactSchema.default("both"),
+  notes: z.string().trim().max(2000).optional().nullable(),
+  active: z.boolean().default(true),
+  role_ids: z.array(z.string().uuid()).default([]),
+  primary_role_id: z.string().uuid().optional().nullable(),
+  qualification_ids: z.array(z.string().uuid()).default([]),
+  consent_sms: z.boolean().default(false),
+  consent_sms_source: consentSourceSchema.optional().nullable(),
+  consent_email: z.boolean().default(false),
+  consent_email_source: consentSourceSchema.optional().nullable(),
+});
+
+const primaryRoleInRoleIds = (data: {
+  primary_role_id?: string | null;
+  role_ids?: string[];
+}) =>
+  !data.primary_role_id ||
+  (data.role_ids ?? []).includes(data.primary_role_id);
+
+const primaryRoleRefine = {
+  path: ["primary_role_id"],
+  message: "Primary role must be one of the selected roles",
+};
+
+export const staffMemberCreateSchema = staffMemberObjectSchema.refine(
+  primaryRoleInRoleIds,
+  primaryRoleRefine,
+);
+
+export type StaffMemberCreateInput = z.infer<typeof staffMemberCreateSchema>;
+
+/**
+ * PATCH-style update: all fields optional. Defaults still apply for the
+ * boolean/array fields when omitted, so `updateStaffMember` can still read
+ * `data.role_ids.length` etc. without null-guards.
+ */
+export const staffMemberUpdateSchema = staffMemberObjectSchema
+  .partial()
+  .extend({
+    // Re-apply defaults so downstream code can rely on them being present
+    // even when the client sent a sparse PATCH payload.
+    preferred_contact: preferredContactSchema.default("both"),
+    active: z.boolean().default(true),
+    role_ids: z.array(z.string().uuid()).default([]),
+    qualification_ids: z.array(z.string().uuid()).default([]),
+    consent_sms: z.boolean().default(false),
+    consent_email: z.boolean().default(false),
+  })
+  .refine(primaryRoleInRoleIds, primaryRoleRefine);
+export type StaffMemberUpdateInput = z.infer<typeof staffMemberUpdateSchema>;
+
+export const csvRowSchema = z.object({
+  first_name: z.string().trim().max(40).optional().default(""),
+  last_name: z.string().trim().max(40).optional().default(""),
+  display_name: z.string().trim().max(80).optional().default(""),
+  email: z.string().trim().max(254).optional().default(""),
+  phone: z.string().trim().max(32).optional().default(""),
+  preferred_contact: z
+    .string()
+    .trim()
+    .optional()
+    .default("")
+    .transform((v) => v.toLowerCase()),
+  primary_role: z.string().trim().max(60).optional().default(""),
+  roles: z.string().trim().optional().default(""),
+  qualifications: z.string().trim().optional().default(""),
+  notes: z.string().trim().max(2000).optional().default(""),
+  active: z.string().trim().optional().default(""),
+});
+
+export type CsvRow = z.infer<typeof csvRowSchema>;
+
+export const roleCreateSchema = z.object({
+  name: z.string().trim().min(1).max(60),
+  description: z.string().trim().max(500).optional().nullable(),
+  sort_order: z.number().int().min(0).max(9999).optional().default(100),
+});
+export type RoleCreateInput = z.infer<typeof roleCreateSchema>;
+
+export const roleUpdateSchema = z.object({
+  name: z.string().trim().min(1).max(60).optional(),
+  description: z.string().trim().max(500).optional().nullable(),
+  sort_order: z.number().int().min(0).max(9999).optional(),
+  active: z.boolean().optional(),
+});
+export type RoleUpdateInput = z.infer<typeof roleUpdateSchema>;
+
+export const qualificationCreateSchema = z.object({
+  name: z.string().trim().min(1).max(60),
+  description: z.string().trim().max(500).optional().nullable(),
+});
+export type QualificationCreateInput = z.infer<
+  typeof qualificationCreateSchema
+>;
+
+export const qualificationUpdateSchema = z.object({
+  name: z.string().trim().min(1).max(60).optional(),
+  description: z.string().trim().max(500).optional().nullable(),
+  active: z.boolean().optional(),
+});
+export type QualificationUpdateInput = z.infer<
+  typeof qualificationUpdateSchema
+>;

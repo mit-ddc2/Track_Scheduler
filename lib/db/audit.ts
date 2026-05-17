@@ -34,8 +34,8 @@ export async function writeAudit(entry: AuditEntry): Promise<void> {
       entity_type: entry.entity_type,
       entity_id: entry.entity_id,
       summary: entry.summary,
-      before: entry.before ?? null,
-      after: entry.after ?? null,
+      before: (entry.before ?? null) as Record<string, unknown> | null,
+      after: (entry.after ?? null) as Record<string, unknown> | null,
       actor_type: actorType,
       // Column name per schema is actor_user_id — see
       // supabase/migrations/0001_initial_schema.sql.
