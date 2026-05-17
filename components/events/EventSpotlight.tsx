@@ -122,9 +122,8 @@ export function EventSpotlight({ event }: { event: EventSpotlightData }) {
           </div>
         </div>
         <div style={{ display: "flex", gap: 8 }}>
-          {/* Phase 5 wires /invite — until then this link 404s, intentionally. */}
           <Link
-            href={`/dashboard/events/${event.id}/invite`}
+            href={`/dashboard/events/${event.id}/replacements`}
             className="cs-btn cs-btn--primary"
             style={{ flex: 1, textDecoration: "none" }}
           >

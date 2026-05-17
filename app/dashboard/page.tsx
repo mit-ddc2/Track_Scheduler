@@ -1,10 +1,17 @@
 import Link from "next/link";
 
 import { Card } from "@/components/ui/Card";
+import { Chip } from "@/components/ui/Chip";
 import { EventCardStrip } from "@/components/events/EventCardStrip";
 import { EventSpotlight } from "@/components/events/EventSpotlight";
+import { requireOwner } from "@/lib/auth/require-owner";
+import { createClient as createServerClient } from "@/lib/db/supabase-server";
 import { listUpcomingEvents } from "@/lib/events/queries";
 import { monthWeekEyebrow } from "@/lib/events/format";
+
+// Dashboard reads cookies via the server-side Supabase client, so the
+// route can't be statically rendered.
+export const dynamic = "force-dynamic";
 
 /**
  * Dashboard home / events overview.
@@ -12,16 +19,43 @@ import { monthWeekEyebrow } from "@/lib/events/format";
  * Phase 3 reads real `events` rows but reports placeholder coverage counts
  * (confirmed/pending = 0). Phase 5 will swap the zero-counts for an aggregate
  * over `event_invites` + `event_assignments`.
+ *
+ * Phase 6 surfaces urgent `event.urgent_underfilled` notifications in the
+ * header: when there's any unread urgent-underfill notification we prefer
+ * its `event_id` as the spotlight (it's the most pressing event), and we
+ * show a small "URGENT" badge alongside the upcoming-events count.
  */
 export default async function DashboardHome() {
+  const session = await requireOwner();
   const events = await listUpcomingEvents();
 
+  // Pull unread urgent_underfilled notifications so we can prefer them as
+  // the spotlight + show a header badge. Cheap query — capped at 20 rows.
+  const supabase = await createServerClient();
+  const { data: urgentRows } = await supabase
+    .from("manager_notifications")
+    .select("event_id, status, event_type")
+    .eq("profile_id", session.profile.id)
+    .eq("event_type", "event.urgent_underfilled")
+    .eq("status", "unread")
+    .limit(20);
+
+  const urgentEventIds = new Set(
+    ((urgentRows ?? []) as Array<{ event_id: string | null }>)
+      .map((r) => r.event_id)
+      .filter((id): id is string => Boolean(id)),
+  );
+  const urgentCount = urgentEventIds.size;
+
   const now = new Date();
-  // Spotlight requires invite data; activates once Phase 5 sends real invites.
-  // Until then `confirmed`/`pending` are placeholder zeros (see
-  // lib/events/queries.ts), so we gate strictly on `status === 'underfilled'`
-  // which can only be reached by the Phase 5 invite flow.
-  const spotlight = events.find((e) => e.status === "underfilled") ?? null;
+  // Prefer an urgent-underfilled event for the spotlight when available;
+  // otherwise fall back to the first status === 'underfilled' event.
+  const urgentEvent =
+    urgentEventIds.size > 0
+      ? events.find((e) => urgentEventIds.has(e.id))
+      : null;
+  const spotlight =
+    urgentEvent ?? events.find((e) => e.status === "underfilled") ?? null;
 
   const underfilledCount = events.filter(
     (e) => e.status === "underfilled",
@@ -45,10 +79,21 @@ export default async function DashboardHome() {
             fontSize: 11,
             color: "var(--text-2)",
             letterSpacing: "0.04em",
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            flexWrap: "wrap",
           }}
         >
-          {events.length} event{events.length === 1 ? "" : "s"} ·{" "}
-          {underfilledCount} underfilled · {pendingCount} pending
+          <span>
+            {events.length} event{events.length === 1 ? "" : "s"} ·{" "}
+            {underfilledCount} underfilled · {pendingCount} pending
+          </span>
+          {urgentCount > 0 && (
+            <Chip tone="bad">
+              {urgentCount} URGENT · NEEDS REPLACEMENTS
+            </Chip>
+          )}
         </div>
       </header>
 
