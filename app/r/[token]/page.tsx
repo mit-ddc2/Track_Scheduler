@@ -80,7 +80,7 @@ export default async function RsvpPage({ params }: PageProps) {
   ]);
 
   if (evRes.error || !evRes.data) {
-    return <RsvpExpired reason="invalid" />;
+    return <RsvpExpired reason="unavailable" />;
   }
   const event = evRes.data as EventRow;
   const staff = (staffRes.data as StaffRow | null) ?? {

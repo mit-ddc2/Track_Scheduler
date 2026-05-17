@@ -100,14 +100,16 @@ describe("submitRsvpResponse", () => {
     }
   });
 
-  it("rejects an expired token", async () => {
+  it("rejects an expired token (collapsed to generic public error)", async () => {
     const raw = seedTokenAndInvite({
       expiresAt: new Date(Date.now() - 1000).toISOString(),
     });
     const res = await mod.submitRsvpResponseImpl({ token: raw, action: "accept" });
     expect(res.ok).toBe(false);
     if (!res.ok) {
-      expect(res.error).toMatch(/expired/i);
+      // Per SECURITY_AUDIT.md M3/H3-c, the public surface must not leak
+      // the specific reason — collapsed to "no longer valid".
+      expect(res.error).toMatch(/no longer valid/i);
     }
   });
 
@@ -167,5 +169,88 @@ describe("submitRsvpResponse", () => {
     const raw = seedTokenAndInvite({ status: "invited" });
     const res = await mod.submitRsvpResponseImpl({ token: raw, action: "cancel" });
     expect(res.ok).toBe(false);
+  });
+
+  it("treats a stale used_at (> 24h ago) as exhausted", async () => {
+    const longAgo = new Date(Date.now() - 25 * 3600 * 1000).toISOString();
+    const raw = seedTokenAndInvite({
+      usedAt: longAgo,
+      status: "accepted",
+    });
+    const res = await mod.submitRsvpResponseImpl({
+      token: raw,
+      action: "cancel",
+    });
+    expect(res.ok).toBe(false);
+    if (!res.ok) {
+      // Public surface must use the collapsed generic message.
+      expect(res.error).toMatch(/no longer valid/i);
+    }
+  });
+
+  it("allows a recently-used token to flip declined → accepted while event is open", async () => {
+    const raw = seedTokenAndInvite({
+      usedAt: new Date(Date.now() - 5 * 60_000).toISOString(),
+      status: "declined",
+    });
+    const res = await mod.submitRsvpResponseImpl({
+      token: raw,
+      action: "accept",
+    });
+    expect(res.ok).toBe(true);
+    expect(db.tables.event_invites[0].status).toBe("accepted");
+  });
+
+  it("rejects a recently-used token when the event is locked / cancelled", async () => {
+    const raw = seedTokenAndInvite({
+      usedAt: new Date(Date.now() - 5 * 60_000).toISOString(),
+      status: "accepted",
+    });
+    // Force the event into a locked state.
+    db.tables.events[0].status = "cancelled";
+
+    const res = await mod.submitRsvpResponseImpl({
+      token: raw,
+      action: "cancel",
+    });
+    expect(res.ok).toBe(false);
+    if (!res.ok) {
+      expect(res.error).toMatch(/no longer valid/i);
+    }
+  });
+});
+
+describe("loadInviteByTokenImpl (public surface)", () => {
+  it("collapses all reason codes to 'unavailable' for public callers", async () => {
+    // Invalid token (no hash match).
+    seedTokenAndInvite();
+    const bogus = await mod.loadInviteByTokenImpl("definitely-not-real");
+    expect(bogus.ok).toBe(false);
+    if (!bogus.ok) {
+      expect(bogus.reason).toBe("unavailable");
+    }
+  });
+
+  it("returns 'unavailable' for expired tokens (does not leak 'expired')", async () => {
+    const raw = seedTokenAndInvite({
+      expiresAt: new Date(Date.now() - 1000).toISOString(),
+    });
+    const res = await mod.loadInviteByTokenImpl(raw);
+    expect(res.ok).toBe(false);
+    if (!res.ok) {
+      expect(res.reason).toBe("unavailable");
+    }
+  });
+
+  it("returns 'unavailable' for stale-used tokens (does not leak 'used')", async () => {
+    const raw = seedTokenAndInvite({
+      usedAt: new Date(Date.now() - 25 * 3600 * 1000).toISOString(),
+      status: "accepted",
+    });
+    const res = await mod.loadInviteByTokenImpl(raw);
+    expect(res.ok).toBe(false);
+    if (!res.ok) {
+      expect(res.reason).toBe("unavailable");
+    }
   });
 });

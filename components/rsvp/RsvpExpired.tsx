@@ -1,7 +1,14 @@
 import { getOwnerContact } from "@/lib/utils/contact";
 
 export type RsvpExpiredProps = {
-  reason: "invalid" | "expired" | "used";
+  /**
+   * Reason for the empty/error state. `unavailable` is the public default —
+   * all other reasons are collapsed into it so the response surface cannot
+   * be used as a token-state oracle (see SECURITY_AUDIT.md M3 / H3).
+   * `used`, `invalid`, `expired` remain in the type for internal /
+   * admin-facing surfaces that already know more context.
+   */
+  reason: "invalid" | "expired" | "used" | "unavailable";
 };
 
 const COPY: Record<
@@ -22,6 +29,11 @@ const COPY: Record<
     eyebrow: "● LINK ALREADY USED",
     title: "This RSVP link was already used.",
     body: "Each link can only be used once. If you need to change your response, ask Robert to send a fresh invite.",
+  },
+  unavailable: {
+    eyebrow: "● LINK NOT AVAILABLE",
+    title: "This RSVP link isn't available.",
+    body: "This invitation link is no longer valid. If you still need to update your status, get in touch with Robert.",
   },
 };
 
