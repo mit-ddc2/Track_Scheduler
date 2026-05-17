@@ -342,7 +342,6 @@ const inputStyle: React.CSSProperties = {
   background: "var(--bg-2)",
   color: "var(--text)",
   font: "500 14px/1.2 inherit",
-  outline: "none",
   minHeight: 44,
 };
 

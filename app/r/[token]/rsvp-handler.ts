@@ -53,6 +53,12 @@ export type LoadedInvite = {
   token_id: string;
   expires_at: string;
   used_at: string | null;
+  // P-H2: hydrate event + staff in the token join so the submit path can
+  // skip two follow-up SELECTs.
+  event_title?: string;
+  event_required_headcount?: number;
+  event_status?: string;
+  staff_display_name?: string;
 };
 
 export async function loadInviteByTokenImpl(rawToken: string): Promise<
@@ -70,9 +76,15 @@ export async function loadInviteByTokenImpl(rawToken: string): Promise<
   }
 
   const admin = getAdmin();
+  // P-H2: pull token + invite + event + staff in a single SELECT via
+  // PostgREST embeds (was 2-4 round-trips). The unit-test MockSupabase
+  // doesn't model joined selects, so we fall back to the 2-query path
+  // when the embed isn't populated.
   const tokRes = await admin
     .from("rsvp_tokens")
-    .select("id, invite_id, expires_at, used_at")
+    .select(
+      "id, invite_id, expires_at, used_at, event_invites(id, event_id, staff_member_id, status, events(id, title, required_headcount, status), staff_members(id, display_name))",
+    )
     .eq("token_hash", hash)
     .maybeSingle();
   if (tokRes.error || !tokRes.data) {
@@ -83,22 +95,65 @@ export async function loadInviteByTokenImpl(rawToken: string): Promise<
     invite_id: string;
     expires_at: string;
     used_at: string | null;
+    event_invites?: {
+      id: string;
+      event_id: string;
+      staff_member_id: string;
+      status: string;
+      events?: {
+        id: string;
+        title: string;
+        required_headcount: number;
+        status: string;
+      } | null;
+      staff_members?: { id: string; display_name: string } | null;
+    } | null;
   };
 
-  const inviteRes = await admin
-    .from("event_invites")
-    .select("id, event_id, staff_member_id, status")
-    .eq("id", token.invite_id)
-    .maybeSingle();
-  if (inviteRes.error || !inviteRes.data) {
-    return { ok: false, reason: "invalid" };
-  }
-  const invite = inviteRes.data as {
+  let invite: {
     id: string;
     event_id: string;
     staff_member_id: string;
     status: string;
   };
+  let eventHydrated:
+    | { title: string; required_headcount: number; status: string }
+    | null = null;
+  let staffHydrated: { display_name: string } | null = null;
+
+  if (token.event_invites) {
+    invite = {
+      id: token.event_invites.id,
+      event_id: token.event_invites.event_id,
+      staff_member_id: token.event_invites.staff_member_id,
+      status: token.event_invites.status,
+    };
+    if (token.event_invites.events) {
+      eventHydrated = {
+        title: token.event_invites.events.title,
+        required_headcount: token.event_invites.events.required_headcount,
+        status: token.event_invites.events.status,
+      };
+    }
+    if (token.event_invites.staff_members) {
+      staffHydrated = {
+        display_name: token.event_invites.staff_members.display_name,
+      };
+    }
+  } else {
+    // Embed not populated (mock client / older code path): fall back to
+    // the legacy invite lookup. Production PostgREST will always populate
+    // the embed, so this branch is dead in production.
+    const inviteRes = await admin
+      .from("event_invites")
+      .select("id, event_id, staff_member_id, status")
+      .eq("id", token.invite_id)
+      .maybeSingle();
+    if (inviteRes.error || !inviteRes.data) {
+      return { ok: false, reason: "invalid" };
+    }
+    invite = inviteRes.data as typeof invite;
+  }
 
   if (new Date(token.expires_at).getTime() < Date.now()) {
     return { ok: false, reason: "expired" };
@@ -114,6 +169,10 @@ export async function loadInviteByTokenImpl(rawToken: string): Promise<
       token_id: token.id,
       expires_at: token.expires_at,
       used_at: token.used_at,
+      event_title: eventHydrated?.title,
+      event_required_headcount: eventHydrated?.required_headcount,
+      event_status: eventHydrated?.status,
+      staff_display_name: staffHydrated?.display_name,
     },
   };
 }
@@ -166,25 +225,36 @@ export async function submitRsvpResponseImpl(
   const { invite } = loaded;
   const admin = getAdmin();
 
-  const staffRes = await admin
-    .from("staff_members")
-    .select("id, display_name")
-    .eq("id", invite.staff_member_id)
-    .maybeSingle();
-  const staffName =
-    (staffRes.data?.display_name as string | undefined) ?? "Responder";
+  // P-H2: prefer the hydrated values from loadInviteByTokenImpl's joined
+  // SELECT. Only fall back to extra SELECTs when the embed is missing
+  // (e.g., in-memory test mocks that don't model joins).
+  let staffName = invite.staff_display_name ?? null;
+  if (!staffName) {
+    const staffRes = await admin
+      .from("staff_members")
+      .select("id, display_name")
+      .eq("id", invite.staff_member_id)
+      .maybeSingle();
+    staffName =
+      (staffRes.data?.display_name as string | undefined) ?? "Responder";
+  }
 
-  const evRes = await admin
-    .from("events")
-    .select("id, title, required_headcount, status")
-    .eq("id", invite.event_id)
-    .maybeSingle();
-  const eventTitle =
-    (evRes.data?.title as string | undefined) ?? "(untitled event)";
-  const requiredHeadcount =
-    (evRes.data?.required_headcount as number | undefined) ?? 0;
-  const currentEventStatus =
-    (evRes.data?.status as string | undefined) ?? "scheduled";
+  let eventTitle = invite.event_title ?? null;
+  let requiredHeadcount = invite.event_required_headcount;
+  let currentEventStatus = invite.event_status ?? null;
+  if (!eventTitle || requiredHeadcount === undefined || !currentEventStatus) {
+    const evRes = await admin
+      .from("events")
+      .select("id, title, required_headcount, status")
+      .eq("id", invite.event_id)
+      .maybeSingle();
+    eventTitle =
+      (evRes.data?.title as string | undefined) ?? "(untitled event)";
+    requiredHeadcount =
+      (evRes.data?.required_headcount as number | undefined) ?? 0;
+    currentEventStatus =
+      (evRes.data?.status as string | undefined) ?? "scheduled";
+  }
 
   const newInviteStatus = mapActionToInviteStatus(action, invite.status);
   if (action === "cancel" && newInviteStatus === null) {
@@ -226,56 +296,47 @@ export async function submitRsvpResponseImpl(
     }
   }
 
-  await admin.from("invite_response_history").insert({
-    invite_id: invite.invite_id,
-    event_id: invite.event_id,
-    staff_member_id: invite.staff_member_id,
-    old_status: oldStatus,
-    new_status: newInviteStatus ?? oldStatus,
-    response_note: note ?? null,
-    actor_type: "responder_token",
-  });
+  // P-H2: response history insert, assignment write, and rsvp_tokens
+  // update are all independent — fan them out via Promise.all instead of
+  // running serially. The assignment write is a single upsert on the
+  // (event_id, staff_member_id) unique key instead of select-then-
+  // update-or-insert (cuts 1 round-trip).
+  const writes: Array<Promise<unknown>> = [];
+
+  writes.push(
+    admin.from("invite_response_history").insert({
+      invite_id: invite.invite_id,
+      event_id: invite.event_id,
+      staff_member_id: invite.staff_member_id,
+      old_status: oldStatus,
+      new_status: newInviteStatus ?? oldStatus,
+      response_note: note ?? null,
+      actor_type: "responder_token",
+    }),
+  );
 
   if (action === "accept") {
-    const existing = await admin
-      .from("event_assignments")
-      .select("id, status")
-      .eq("event_id", invite.event_id)
-      .eq("staff_member_id", invite.staff_member_id)
-      .maybeSingle();
-    if (existing.data?.id) {
-      await admin
+    writes.push(
+      admin
         .from("event_assignments")
-        .update({
-          status: "confirmed",
-          confirmed_at: nowIso,
-          cancelled_at: null,
-          updated_at: nowIso,
-        })
-        .eq("id", existing.data.id);
-    } else {
-      const insErr = await admin.from("event_assignments").insert({
-        event_id: invite.event_id,
-        staff_member_id: invite.staff_member_id,
-        invite_id: invite.invite_id,
-        status: "confirmed",
-        confirmed_at: nowIso,
-      });
-      if (insErr.error && insErr.error.code !== "23505") {
-        console.warn(
-          `[rsvp] assignment insert failed: ${insErr.error.message}`,
-        );
-      }
-    }
+        .upsert(
+          {
+            event_id: invite.event_id,
+            staff_member_id: invite.staff_member_id,
+            invite_id: invite.invite_id,
+            status: "confirmed",
+            confirmed_at: nowIso,
+            cancelled_at: null,
+            updated_at: nowIso,
+          },
+          { onConflict: "event_id,staff_member_id" },
+        ),
+    );
   } else if (action === "cancel" || action === "decline") {
-    const existing = await admin
-      .from("event_assignments")
-      .select("id")
-      .eq("event_id", invite.event_id)
-      .eq("staff_member_id", invite.staff_member_id)
-      .maybeSingle();
-    if (existing.data?.id) {
-      await admin
+    // For cancel/decline we only update existing assignments (no insert).
+    // .update().eq().eq() is a single round-trip — no need to SELECT first.
+    writes.push(
+      admin
         .from("event_assignments")
         .update({
           status: "cancelled",
@@ -284,16 +345,21 @@ export async function submitRsvpResponseImpl(
             action === "cancel" ? "member_cancelled" : "member_declined",
           updated_at: nowIso,
         })
-        .eq("id", existing.data.id);
-    }
+        .eq("event_id", invite.event_id)
+        .eq("staff_member_id", invite.staff_member_id),
+    );
   }
 
   if (action !== "update_note") {
-    await admin
-      .from("rsvp_tokens")
-      .update({ used_at: nowIso })
-      .eq("id", invite.token_id);
+    writes.push(
+      admin
+        .from("rsvp_tokens")
+        .update({ used_at: nowIso })
+        .eq("id", invite.token_id),
+    );
   }
+
+  await Promise.all(writes);
 
   const coverage = await recomputeCoverage(admin, invite.event_id, requiredHeadcount);
   const nextStatus = statusForCoverage(

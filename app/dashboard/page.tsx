@@ -27,18 +27,22 @@ export const dynamic = "force-dynamic";
  */
 export default async function DashboardHome() {
   const session = await requireOwner();
-  const events = await listUpcomingEvents();
 
-  // Pull unread urgent_underfilled notifications so we can prefer them as
-  // the spotlight + show a header badge. Cheap query — capped at 20 rows.
+  // listUpcomingEvents() and the urgent notifications query are independent
+  // — fan them out via Promise.all to save one DB round-trip per dashboard
+  // load. We instantiate the server client once and share it.
   const supabase = await createServerClient();
-  const { data: urgentRows } = await supabase
-    .from("manager_notifications")
-    .select("event_id, status, event_type")
-    .eq("profile_id", session.profile.id)
-    .eq("event_type", "event.urgent_underfilled")
-    .eq("status", "unread")
-    .limit(20);
+  const [events, urgentRes] = await Promise.all([
+    listUpcomingEvents(),
+    supabase
+      .from("manager_notifications")
+      .select("event_id, status, event_type")
+      .eq("profile_id", session.profile.id)
+      .eq("event_type", "event.urgent_underfilled")
+      .eq("status", "unread")
+      .limit(20),
+  ]);
+  const { data: urgentRows } = urgentRes;
 
   const urgentEventIds = new Set(
     ((urgentRows ?? []) as Array<{ event_id: string | null }>)

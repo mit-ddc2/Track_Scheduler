@@ -60,11 +60,16 @@ export default async function EventDetailPage({ params, searchParams }: PageProp
           .order("updated_at", { ascending: false })
       : Promise.resolve({ data: [] as unknown[], error: null }),
     tab === "messages"
-      ? supabase
+      ? // message_outbox has no event_id column — filter via invite_id.
+        // The inner-join on event_invites guarantees only rows tied to
+        // this event come back. Without this filter the Messages tab
+        // showed *all* events' messages.
+        supabase
           .from("message_outbox")
           .select(
-            "id, channel, to_value, status, sent_at, error_code, error_message, created_at",
+            "id, channel, to_value, status, sent_at, error_code, error_message, created_at, event_invites!inner(event_id)",
           )
+          .eq("event_invites.event_id", eventId)
           .order("created_at", { ascending: false })
           .limit(50)
       : Promise.resolve({ data: [] as unknown[], error: null }),

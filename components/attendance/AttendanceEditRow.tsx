@@ -48,7 +48,6 @@ const FIELD_STYLE: React.CSSProperties = {
   color: "var(--text)",
   fontFamily: "inherit",
   fontSize: 12,
-  outline: "none",
 };
 
 const LABEL_STYLE: React.CSSProperties = {

@@ -218,6 +218,13 @@ export async function drainOutbox(
   }
   const rows = (due.data ?? []) as MessageOutboxRow[];
 
+  // P-H1: batch the suppression-check lookups. Instead of 1-3 round-trips
+  // per row inside `checkSuppression`, we fetch all relevant
+  // contact-method / campaign / event rows for the whole batch in 3
+  // queries total (one .in() per table). The per-row check then becomes a
+  // pure in-memory lookup against three Maps.
+  const suppressionCtx = await buildSuppressionContext(admin, rows);
+
   let sent = 0;
   let failed = 0;
   let suppressed = 0;
@@ -242,10 +249,9 @@ export async function drainOutbox(
     const claimed = (claim.data ?? []) as Array<{ id: string }>;
     if (claimed.length === 0) continue;
 
-    // Suppression check (spec §14.3). If the recipient is opted out / the
-    // event got cancelled / etc, mark the row cancelled with SUPPRESSED and
-    // move on — we don't burn an attempt or call the provider.
-    const reason = await checkSuppression(admin, row);
+    // Suppression check (spec §14.3). Pure in-memory check against the
+    // pre-fetched batch context — no DB round-trips here.
+    const reason = checkSuppressionFromContext(row, suppressionCtx);
     if (reason) {
       await admin
         .from("message_outbox")
@@ -339,71 +345,145 @@ export async function drainOutbox(
   };
 }
 
-// ─── Suppression check ─────────────────────────────────────────
+// ─── Suppression check (batched, spec §14.3) ───────────────────
 /**
- * Returns a SuppressionReason if the given outbox row should be cancelled
- * instead of sent, or null if it's still good to go.
- *
- * The checks are deliberately per-row (one round-trip each) rather than a
- * single big JOIN — the in-memory unit test client doesn't model JOINs, and
- * the production volume here is low (hundreds of pending rows per drain at
- * most). If this gets hot we can replace with a SQL view.
+ * Per-batch context populated by a fixed number of round-trips up front so
+ * the per-row check can run entirely in memory. Replaces the legacy
+ * per-row `checkSuppression` (which did 1-3 round-trips per row).
  */
-async function checkSuppression(
+type SuppressionContext = {
+  // (staff_member_id|channel|normalized_value) → { status, consent }
+  contactByKey: Map<string, { status: string; consent: string }>;
+  // campaign_id → { event_id, campaign_type }
+  campaignsById: Map<string, { event_id: string | null; campaign_type: string }>;
+  // event_id → status
+  eventStatusById: Map<string, string>;
+};
+
+function contactKey(
+  staffMemberId: string,
+  channel: string,
+  normalizedValue: string,
+): string {
+  return `${staffMemberId}|${channel}|${normalizedValue}`;
+}
+
+async function buildSuppressionContext(
   admin: AdminClient,
-  row: MessageOutboxRow,
-): Promise<SuppressionReason | null> {
-  // 1) Contact method check (channel + normalized_value + staff_member_id).
-  if (row.staff_member_id) {
-    const cm = await admin
+  rows: MessageOutboxRow[],
+): Promise<SuppressionContext> {
+  const ctx: SuppressionContext = {
+    contactByKey: new Map(),
+    campaignsById: new Map(),
+    eventStatusById: new Map(),
+  };
+  if (rows.length === 0) return ctx;
+
+  const staffIds = Array.from(
+    new Set(
+      rows
+        .map((r) => r.staff_member_id)
+        .filter((id): id is string => Boolean(id)),
+    ),
+  );
+  const campaignIds = Array.from(
+    new Set(
+      rows
+        .map((r) => r.campaign_id)
+        .filter((id): id is string => Boolean(id)),
+    ),
+  );
+
+  // 1) Pull all contact methods for the staff in the batch in ONE query.
+  //    We filter precisely on the (staff, channel, value) tuple in memory.
+  if (staffIds.length > 0) {
+    const cmRes = await admin
       .from("staff_contact_methods")
-      .select("status,consent")
-      .eq("staff_member_id", row.staff_member_id)
-      .eq("channel", row.channel)
-      .eq("normalized_value", row.to_value)
-      .maybeSingle();
-    if (!cm.error && cm.data) {
-      const data = cm.data as { status?: string; consent?: string };
-      const status = data.status ?? "";
-      const consent = data.consent ?? "";
-      if (SUPPRESSED_CONTACT_STATUSES.has(status)) {
-        return `contact_${status}` as SuppressionReason;
-      }
-      if (SUPPRESSED_CONSENT_STATUSES.has(consent)) {
-        return `consent_${consent}` as SuppressionReason;
+      .select("staff_member_id, channel, normalized_value, status, consent")
+      .in("staff_member_id", staffIds);
+    if (!cmRes.error) {
+      type CmRow = {
+        staff_member_id: string;
+        channel: string;
+        normalized_value: string;
+        status?: string;
+        consent?: string;
+      };
+      for (const r of (cmRes.data ?? []) as CmRow[]) {
+        ctx.contactByKey.set(
+          contactKey(r.staff_member_id, r.channel, r.normalized_value),
+          { status: r.status ?? "", consent: r.consent ?? "" },
+        );
       }
     }
   }
 
-  // 2) Event-cancelled check. We only block if the campaign is NOT a
-  // cancellation notice (those still need to go out so people know the
-  // event is off). The spec lists campaign_type values
-  // 'initial'|'reminder'|'replacement'|'calendar_change_notice'; we treat
-  // any value containing "cancellation" as the exception.
-  if (row.campaign_id) {
-    const campaign = await admin
+  // 2) Pull all campaigns referenced by the batch in ONE query.
+  if (campaignIds.length > 0) {
+    const campaignsRes = await admin
       .from("invitation_campaigns" as never)
-      .select("event_id,campaign_type")
-      .eq("id", row.campaign_id)
-      .maybeSingle();
-    if (!campaign.error && campaign.data) {
-      const c = campaign.data as {
-        event_id?: string;
-        campaign_type?: string;
-      };
-      const isCancellationNotice = (c.campaign_type ?? "")
+      .select("id, event_id, campaign_type")
+      .in("id", campaignIds);
+    if (!campaignsRes.error) {
+      type CRow = { id: string; event_id: string | null; campaign_type: string };
+      const eventIds = new Set<string>();
+      for (const r of (campaignsRes.data ?? []) as CRow[]) {
+        ctx.campaignsById.set(r.id, {
+          event_id: r.event_id,
+          campaign_type: r.campaign_type ?? "",
+        });
+        if (r.event_id) eventIds.add(r.event_id);
+      }
+
+      // 3) Pull statuses for all referenced events in ONE query.
+      if (eventIds.size > 0) {
+        const evRes = await admin
+          .from("events")
+          .select("id, status")
+          .in("id", Array.from(eventIds));
+        if (!evRes.error) {
+          type ERow = { id: string; status?: string };
+          for (const r of (evRes.data ?? []) as ERow[]) {
+            ctx.eventStatusById.set(r.id, r.status ?? "");
+          }
+        }
+      }
+    }
+  }
+
+  return ctx;
+}
+
+/** Pure in-memory suppression check against the pre-built batch context. */
+function checkSuppressionFromContext(
+  row: MessageOutboxRow,
+  ctx: SuppressionContext,
+): SuppressionReason | null {
+  // 1) Contact method check.
+  if (row.staff_member_id) {
+    const cm = ctx.contactByKey.get(
+      contactKey(row.staff_member_id, row.channel, row.to_value),
+    );
+    if (cm) {
+      if (SUPPRESSED_CONTACT_STATUSES.has(cm.status)) {
+        return `contact_${cm.status}` as SuppressionReason;
+      }
+      if (SUPPRESSED_CONSENT_STATUSES.has(cm.consent)) {
+        return `consent_${cm.consent}` as SuppressionReason;
+      }
+    }
+  }
+
+  // 2) Event-cancelled check. Cancellation notices still go out.
+  if (row.campaign_id) {
+    const c = ctx.campaignsById.get(row.campaign_id);
+    if (c) {
+      const isCancellationNotice = c.campaign_type
         .toLowerCase()
         .includes("cancellation");
       if (c.event_id && !isCancellationNotice) {
-        const event = await admin
-          .from("events")
-          .select("status")
-          .eq("id", c.event_id)
-          .maybeSingle();
-        if (!event.error && event.data) {
-          const e = event.data as { status?: string };
-          if (e.status === "cancelled") return "event_cancelled";
-        }
+        const status = ctx.eventStatusById.get(c.event_id);
+        if (status === "cancelled") return "event_cancelled";
       }
     }
   }
