@@ -5,11 +5,14 @@ import type { Database } from "./types";
 
 /**
  * Server-side Supabase client bound to the current request's cookies.
- * Uses the new publishable-key naming convention (spec §12.5).
  *
- * Note: `cookies()` is async in Next.js 16; this helper must be awaited.
+ * Uses the new publishable-key naming convention (spec §12.5). The cookies()
+ * helper is async in Next.js 16 — callers must `await createClient()`.
+ *
+ * Writing cookies from a Server Component is a no-op; the request-scoped
+ * proxy is responsible for refreshing and persisting auth cookies.
  */
-export async function createServerClient() {
+export async function createClient() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const publishableKey = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
 
@@ -32,10 +35,13 @@ export async function createServerClient() {
             cookieStore.set(name, value, options);
           }
         } catch {
-          // The `setAll` method was called from a Server Component.
-          // This can be ignored if there is middleware refreshing user sessions.
+          // Called from a Server Component — safe to ignore: the proxy
+          // refreshes auth cookies on the request boundary.
         }
       },
     },
   });
 }
+
+/** @deprecated Use `createClient()`. Kept for legacy callers. */
+export const createServerClient = createClient;
