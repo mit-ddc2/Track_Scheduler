@@ -1,0 +1,189 @@
+@import "tailwindcss";
+
+/* ───────────────────────────────────────────────────────────────────────────
+   Calabogie Safety — design tokens. Three themes.
+   Source of truth: /tmp/design_extracted/calabogie-track/project/theme.css
+   ─────────────────────────────────────────────────────────────────────────── */
+
+:root,
+[data-theme="pit-wall"] {
+  --bg:        #0a0a0a;
+  --bg-2:      #111111;
+  --surface:   #161616;
+  --surface-2: #1c1c1c;
+  --line:      rgba(255, 255, 255, 0.07);
+  --line-2:    rgba(255, 255, 255, 0.14);
+  --text:      #ececec;
+  --text-2:    #a3a3a3;
+  --text-3:    #6b6b6b;
+  --accent:    #E63946;
+  --accent-ink:#fff;
+  --ok:        #22c55e;
+  --warn:      #f59e0b;
+  --bad:       #ef4444;
+  --info:      #38bdf8;
+  --grid-line: rgba(255, 255, 255, 0.03);
+  --chip-bg:   rgba(255, 255, 255, 0.04);
+  --bar-track: rgba(255, 255, 255, 0.08);
+  --shadow:    0 24px 48px -16px rgba(0, 0, 0, 0.55);
+}
+
+[data-theme="day"] {
+  --bg:        #f4f3ee;
+  --bg-2:      #ecebe5;
+  --surface:   #ffffff;
+  --surface-2: #f7f6f1;
+  --line:      rgba(0, 0, 0, 0.08);
+  --line-2:    rgba(0, 0, 0, 0.16);
+  --text:      #0a0a0a;
+  --text-2:    #4a4a4a;
+  --text-3:    #8a8a8a;
+  --accent:    #cf2031;
+  --accent-ink:#fff;
+  --ok:        #16a34a;
+  --warn:      #b45309;
+  --bad:       #c81e1e;
+  --info:      #0284c7;
+  --grid-line: rgba(0, 0, 0, 0.04);
+  --chip-bg:   rgba(0, 0, 0, 0.04);
+  --bar-track: rgba(0, 0, 0, 0.08);
+  --shadow:    0 24px 48px -16px rgba(0, 0, 0, 0.18);
+}
+
+[data-theme="race-day"] {
+  --bg:        #0a0303;
+  --bg-2:      #160606;
+  --surface:   #1c0808;
+  --surface-2: #240a0a;
+  --line:      rgba(255, 80, 80, 0.12);
+  --line-2:    rgba(255, 80, 80, 0.24);
+  --text:      #fff5f3;
+  --text-2:    #f0a7a0;
+  --text-3:    #a06661;
+  --accent:    #ff3a3a;
+  --accent-ink:#0a0303;
+  --ok:        #5be38f;
+  --warn:      #ffb020;
+  --bad:       #ff5252;
+  --info:      #66d9ff;
+  --grid-line: rgba(255, 80, 80, 0.05);
+  --chip-bg:   rgba(255, 80, 80, 0.06);
+  --bar-track: rgba(255, 80, 80, 0.12);
+  --shadow:    0 24px 48px -16px rgba(255, 0, 0, 0.18);
+}
+
+/* ── Globals ── */
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+body {
+  font-family: var(--font-inter), -apple-system, system-ui, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  -webkit-font-smoothing: antialiased;
+  font-feature-settings: 'ss01', 'cv11';
+}
+.mono { font-family: var(--font-jetbrains-mono), ui-monospace, Menlo, monospace; font-feature-settings: 'tnum', 'zero'; }
+.tnum { font-variant-numeric: tabular-nums; }
+.uc { text-transform: uppercase; letter-spacing: 0.08em; }
+
+/* Scoped to the prototype host so canvas/desktop frames pick up tokens */
+.cs-host {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-inter), -apple-system, system-ui, sans-serif;
+}
+.cs-host .mono { font-family: var(--font-jetbrains-mono), ui-monospace, monospace; font-feature-settings: 'tnum'; }
+
+/* ── Reusable atoms ── */
+.cs-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  gap: 6px; padding: 10px 14px; border-radius: 4px;
+  font: 600 12px/1 var(--font-inter), sans-serif; letter-spacing: 0.06em;
+  text-transform: uppercase; cursor: pointer; border: 1px solid var(--line);
+  background: var(--surface); color: var(--text);
+  transition: background 80ms ease, border-color 80ms ease, transform 80ms ease;
+}
+.cs-btn:hover { border-color: var(--line-2); background: var(--surface-2); }
+.cs-btn:active { transform: translateY(1px); }
+.cs-btn--primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+.cs-btn--primary:hover { background: var(--accent); filter: brightness(1.08); border-color: var(--accent); }
+.cs-btn--ghost { background: transparent; }
+.cs-btn--danger { color: var(--accent); border-color: rgba(230, 57, 70, 0.3); }
+.cs-btn--sm { padding: 6px 10px; font-size: 10px; }
+.cs-btn--lg { padding: 14px 20px; font-size: 13px; }
+
+.cs-chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 4px 8px; border-radius: 3px; background: var(--chip-bg);
+  font: 600 10px/1 var(--font-jetbrains-mono), monospace; letter-spacing: 0.04em;
+  color: var(--text-2); text-transform: uppercase; white-space: nowrap;
+}
+.cs-chip--ok    { color: var(--ok);    background: color-mix(in srgb, var(--ok)    12%, transparent); }
+.cs-chip--warn  { color: var(--warn);  background: color-mix(in srgb, var(--warn)  12%, transparent); }
+.cs-chip--bad   { color: var(--bad);   background: color-mix(in srgb, var(--bad)   12%, transparent); }
+.cs-chip--info  { color: var(--info);  background: color-mix(in srgb, var(--info)  12%, transparent); }
+.cs-chip--accent{ color: var(--accent);background: color-mix(in srgb, var(--accent)12%, transparent); }
+
+.cs-dot { width: 6px; height: 6px; border-radius: 50%; display: inline-block; }
+.cs-dot--ok   { background: var(--ok);   box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok)   20%, transparent); }
+.cs-dot--warn { background: var(--warn); box-shadow: 0 0 0 3px color-mix(in srgb, var(--warn) 20%, transparent); }
+.cs-dot--bad  { background: var(--bad);  box-shadow: 0 0 0 3px color-mix(in srgb, var(--bad)  20%, transparent); }
+.cs-dot--idle { background: var(--text-3); }
+
+.cs-card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+}
+.cs-card--hover { transition: border-color 100ms ease; }
+.cs-card--hover:hover { border-color: var(--line-2); }
+
+.cs-h1      { font: 800 28px/1.05 var(--font-inter), sans-serif; letter-spacing: -0.02em; margin: 0; }
+.cs-h2      { font: 700 18px/1.15 var(--font-inter), sans-serif; letter-spacing: -0.01em; margin: 0; }
+.cs-h3      { font: 600 14px/1.2  var(--font-inter), sans-serif; margin: 0; }
+.cs-eyebrow { font: 600 10px/1    var(--font-jetbrains-mono), monospace; letter-spacing: 0.14em; text-transform: uppercase; color: var(--text-3); }
+.cs-data-xl { font: 700 36px/1    var(--font-jetbrains-mono), monospace; font-variant-numeric: tabular-nums; letter-spacing: -0.02em; }
+.cs-data-lg { font: 700 24px/1    var(--font-jetbrains-mono), monospace; font-variant-numeric: tabular-nums; }
+.cs-label   { font: 600 10px/1    var(--font-jetbrains-mono), monospace; text-transform: uppercase; letter-spacing: 0.1em; color: var(--text-3); }
+
+/* Pit stripes — diagonal accent for headers / alerts */
+.cs-stripes {
+  background-image: repeating-linear-gradient(
+    -45deg, var(--accent), var(--accent) 10px,
+    color-mix(in srgb, var(--accent) 70%, black) 10px, color-mix(in srgb, var(--accent) 70%, black) 20px
+  );
+}
+.cs-stripes--muted {
+  background-image: repeating-linear-gradient(
+    -45deg, var(--line-2), var(--line-2) 6px,
+    transparent 6px, transparent 12px
+  );
+}
+
+/* Coverage bar */
+.cs-bar { display: flex; gap: 2px; height: 6px; background: var(--bar-track); border-radius: 1px; overflow: hidden; }
+.cs-bar > span { display: block; height: 100%; }
+
+/* Section divider for lists */
+.cs-divider { height: 1px; background: var(--line); margin: 0; border: 0; }
+
+/* Tap highlight off */
+button, [role="button"] { -webkit-tap-highlight-color: transparent; }
+
+/* Density variants */
+[data-density="compact"] {
+  --row-pad-y: 8px;
+  --row-pad-x: 12px;
+  --card-pad: 12px;
+}
+[data-density="comfy"] {
+  --row-pad-y: 12px;
+  --row-pad-x: 14px;
+  --card-pad: 16px;
+}
+
+/* Scrollbar (dark themes) */
+[data-theme="pit-wall"] ::-webkit-scrollbar,
+[data-theme="race-day"] ::-webkit-scrollbar { width: 6px; height: 6px; }
+[data-theme="pit-wall"] ::-webkit-scrollbar-thumb,
+[data-theme="race-day"] ::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.1); border-radius: 3px; }
