@@ -2,5 +2,10 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": "nextjs",
   "regions": ["iad1"],
-  "crons": []
+  "crons": [
+    {
+      "path": "/api/jobs/drain-outbox",
+      "schedule": "* * * * *"
+    }
+  ]
 }

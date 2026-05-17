@@ -1,12 +1,13 @@
 import { z } from "zod";
 
 /**
- * Domain-wide Zod schemas. Server actions and form code share these so
- * validation, types, and error messages stay in lock-step.
+ * Domain-wide Zod schemas. Server actions, form code, and webhook handlers
+ * share these so validation, types, and error messages stay in lock-step.
  *
  * Sections:
- *   - Events (create/update/requirements/cancel) — Phase 3
- *   - Staff/roster + roles + qualifications + CSV import — Phase 2
+ *   - Events (create/update/requirements/cancel)
+ *   - Staff/roster + roles + qualifications + CSV import
+ *   - Provider webhook payloads (Twilio status, Twilio inbound, Resend)
  */
 
 // ─── Events ──────────────────────────────────────────────────────────────
@@ -112,6 +113,7 @@ export const cancelEventSchema = z.object({
 
 export type CancelEventInput = z.infer<typeof cancelEventSchema>;
 
+<<<<<<< HEAD
 // ─── Roster / staff / roles / qualifications / CSV ───────────────────────
 
 export const preferredContactSchema = z.enum([
@@ -260,3 +262,61 @@ export const qualificationUpdateSchema = z.object({
 export type QualificationUpdateInput = z.infer<
   typeof qualificationUpdateSchema
 >;
+
+// ─── Provider webhook payloads ───────────────────────────────────────────
+
+/**
+ * Twilio status callback (HTTP form-encoded). Twilio sends a variable set of
+ * fields depending on the message type — we only require MessageSid here and
+ * accept any string for the other documented fields.
+ *
+ * https://www.twilio.com/docs/messaging/guides/webhook-request
+ */
+export const twilioStatusCallbackSchema = z
+  .object({
+    MessageSid: z.string().min(1),
+    MessageStatus: z.string().optional(),
+    SmsStatus: z.string().optional(),
+    ErrorCode: z.string().optional(),
+    ErrorMessage: z.string().optional(),
+    To: z.string().optional(),
+    From: z.string().optional(),
+  })
+  .passthrough();
+
+export type TwilioStatusCallbackPayload = z.infer<typeof twilioStatusCallbackSchema>;
+
+/**
+ * Twilio inbound SMS (form-encoded). MessageSid + From + Body are the
+ * essentials we use to interpret STOP/HELP/START semantics.
+ */
+export const twilioInboundSchema = z
+  .object({
+    MessageSid: z.string().min(1),
+    From: z.string().min(1),
+    To: z.string().optional(),
+    Body: z.string().optional(),
+  })
+  .passthrough();
+
+export type TwilioInboundPayload = z.infer<typeof twilioInboundSchema>;
+
+/**
+ * Resend event payload (JSON). The shape is roughly:
+ *  { type: "email.delivered", data: { email_id, to, ... }, created_at }
+ * https://resend.com/docs/dashboard/webhooks/event-types
+ */
+export const resendEventSchema = z
+  .object({
+    type: z.string().min(1),
+    data: z
+      .object({
+        email_id: z.string().optional(),
+        to: z.union([z.string(), z.array(z.string())]).optional(),
+      })
+      .passthrough(),
+    created_at: z.string().optional(),
+  })
+  .passthrough();
+
+export type ResendEventPayload = z.infer<typeof resendEventSchema>;
