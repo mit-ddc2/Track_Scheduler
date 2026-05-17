@@ -55,10 +55,40 @@ export type LoadedInvite = {
   used_at: string | null;
 };
 
-export async function loadInviteByTokenImpl(rawToken: string): Promise<
+/**
+ * Internal load result — distinguishes specific failure reasons so the
+ * server-side can log them. The PUBLIC callers (page + submit route) must
+ * collapse these into a single generic "unavailable" state via
+ * {@link loadInviteByTokenImpl} — see M3/H3-c in SECURITY_AUDIT.md.
+ */
+export type InternalInviteLoadResult =
   | { ok: true; invite: LoadedInvite }
-  | { ok: false; reason: "invalid" | "expired" | "used" }
-> {
+  | { ok: false; reason: "invalid" | "expired" | "used" };
+
+/**
+ * Public-surface result. Collapses every "can't sign in" reason to a single
+ * generic state so the public RSVP page does not leak a token-state oracle to
+ * fuzzers. The internal reason is still logged server-side.
+ */
+export type PublicInviteLoadResult =
+  | { ok: true; invite: LoadedInvite }
+  | { ok: false; reason: "unavailable" };
+
+const REUSE_GRACE_MS = 24 * 60 * 60 * 1000; // 24h
+const LOCKED_EVENT_STATUSES = new Set([
+  "cancelled",
+  "locked",
+  "completed",
+  "closed",
+]);
+
+/**
+ * Internal — returns specific reason codes. Use {@link loadInviteByTokenImpl}
+ * for any caller exposed to the public; that wrapper collapses the reason.
+ */
+export async function loadInviteByTokenInternal(
+  rawToken: string,
+): Promise<InternalInviteLoadResult> {
   if (!rawToken || rawToken.length < 8 || rawToken.length > 200) {
     return { ok: false, reason: "invalid" };
   }
@@ -70,11 +100,17 @@ export async function loadInviteByTokenImpl(rawToken: string): Promise<
   }
 
   const admin = getAdmin();
-  const tokRes = await admin
-    .from("rsvp_tokens")
-    .select("id, invite_id, expires_at, used_at")
-    .eq("token_hash", hash)
-    .maybeSingle();
+  let tokRes: { data: unknown; error: unknown };
+  try {
+    tokRes = await admin
+      .from("rsvp_tokens")
+      .select("id, invite_id, expires_at, used_at")
+      .eq("token_hash", hash)
+      .maybeSingle();
+  } catch (err) {
+    console.error("[rsvp] token lookup threw:", err);
+    return { ok: false, reason: "invalid" };
+  }
   if (tokRes.error || !tokRes.data) {
     return { ok: false, reason: "invalid" };
   }
@@ -85,11 +121,17 @@ export async function loadInviteByTokenImpl(rawToken: string): Promise<
     used_at: string | null;
   };
 
-  const inviteRes = await admin
-    .from("event_invites")
-    .select("id, event_id, staff_member_id, status")
-    .eq("id", token.invite_id)
-    .maybeSingle();
+  let inviteRes: { data: unknown; error: unknown };
+  try {
+    inviteRes = await admin
+      .from("event_invites")
+      .select("id, event_id, staff_member_id, status")
+      .eq("id", token.invite_id)
+      .maybeSingle();
+  } catch (err) {
+    console.error("[rsvp] invite lookup threw:", err);
+    return { ok: false, reason: "invalid" };
+  }
   if (inviteRes.error || !inviteRes.data) {
     return { ok: false, reason: "invalid" };
   }
@@ -104,6 +146,46 @@ export async function loadInviteByTokenImpl(rawToken: string): Promise<
     return { ok: false, reason: "expired" };
   }
 
+  // Enforce used_at. Spec allows re-acceptance from declined → accepted while
+  // the event is still open, so we permit re-use only when:
+  //   (a) the token was used <= REUSE_GRACE_MS ago, AND
+  //   (b) the event is not locked / cancelled / completed.
+  // Otherwise the token is considered exhausted.
+  if (token.used_at) {
+    const usedAgeMs = Date.now() - new Date(token.used_at).getTime();
+    let eventStatus: string = "scheduled";
+    try {
+      const evRes = await admin
+        .from("events")
+        .select("status")
+        .eq("id", invite.event_id)
+        .maybeSingle();
+      eventStatus = (evRes.data?.status as string | undefined) ?? "scheduled";
+    } catch (err) {
+      console.error("[rsvp] event status lookup threw:", err);
+    }
+    const eventLocked = LOCKED_EVENT_STATUSES.has(eventStatus);
+    const inviteFinalised = new Set([
+      "accepted",
+      "declined",
+      "cancelled_by_member",
+    ]).has(invite.status);
+
+    if (eventLocked) {
+      return { ok: false, reason: "used" };
+    }
+    if (usedAgeMs > REUSE_GRACE_MS) {
+      return { ok: false, reason: "used" };
+    }
+    // Token was used recently AND event is still open AND the invite is in
+    // a finalised state — allow the responder to flip their answer.
+    if (!inviteFinalised) {
+      // Token was used but invite isn't in a finalised state; treat as used
+      // (this shouldn't normally happen but defends against odd states).
+      return { ok: false, reason: "used" };
+    }
+  }
+
   return {
     ok: true,
     invite: {
@@ -116,6 +198,23 @@ export async function loadInviteByTokenImpl(rawToken: string): Promise<
       used_at: token.used_at,
     },
   };
+}
+
+/**
+ * Public wrapper — collapses all failure reasons into a single generic
+ * `unavailable` so attackers cannot use the response surface as a
+ * token-state oracle (see SECURITY_AUDIT.md H3 / M3).
+ *
+ * The specific reason is logged server-side for ops debugging.
+ */
+export async function loadInviteByTokenImpl(
+  rawToken: string,
+): Promise<PublicInviteLoadResult> {
+  const res = await loadInviteByTokenInternal(rawToken);
+  if (res.ok) return res;
+  // Log the specific reason for ops, but never return it to the caller.
+  console.warn(`[rsvp] token load failed: reason=${res.reason}`);
+  return { ok: false, reason: "unavailable" };
 }
 
 function mapActionToInviteStatus(
@@ -140,6 +239,9 @@ function mapActionToInviteStatus(
   }
 }
 
+const PUBLIC_SAVE_ERROR =
+  "Could not process your response. Please try again.";
+
 export async function submitRsvpResponseImpl(
   rawInput: RsvpSubmitInput,
 ): Promise<RsvpActionResult> {
@@ -152,39 +254,53 @@ export async function submitRsvpResponseImpl(
   }
   const { token, action, note } = parsed.data;
 
-  const loaded = await loadInviteByTokenImpl(token);
+  // We need the internal reason for accurate user-facing copy (expired vs
+  // unavailable), but we explicitly do NOT leak which one to the public:
+  // the form copy reads "no longer valid" for all states except a soft
+  // "already-finalised" hint elsewhere in the UI.
+  const loaded = await loadInviteByTokenInternal(token);
   if (!loaded.ok) {
-    if (loaded.reason === "expired") {
-      return { ok: false, error: "This invitation link has expired." };
-    }
-    if (loaded.reason === "used") {
-      return { ok: false, error: "This invitation link has already been used." };
-    }
     return { ok: false, error: "This invitation link is no longer valid." };
   }
 
   const { invite } = loaded;
   const admin = getAdmin();
 
-  const staffRes = await admin
-    .from("staff_members")
-    .select("id, display_name")
-    .eq("id", invite.staff_member_id)
-    .maybeSingle();
+  let staffRes: { data: unknown };
+  try {
+    staffRes = await admin
+      .from("staff_members")
+      .select("id, display_name")
+      .eq("id", invite.staff_member_id)
+      .maybeSingle();
+  } catch (err) {
+    console.error("[rsvp] staff lookup threw:", err);
+    return { ok: false, error: PUBLIC_SAVE_ERROR };
+  }
   const staffName =
-    (staffRes.data?.display_name as string | undefined) ?? "Responder";
+    ((staffRes.data as { display_name?: string } | null)?.display_name as
+      | string
+      | undefined) ?? "Responder";
 
-  const evRes = await admin
-    .from("events")
-    .select("id, title, required_headcount, status")
-    .eq("id", invite.event_id)
-    .maybeSingle();
-  const eventTitle =
-    (evRes.data?.title as string | undefined) ?? "(untitled event)";
+  let evRes: { data: unknown };
+  try {
+    evRes = await admin
+      .from("events")
+      .select("id, title, required_headcount, status")
+      .eq("id", invite.event_id)
+      .maybeSingle();
+  } catch (err) {
+    console.error("[rsvp] event lookup threw:", err);
+    return { ok: false, error: PUBLIC_SAVE_ERROR };
+  }
+  const evData = evRes.data as
+    | { title?: string; required_headcount?: number; status?: string }
+    | null;
+  const eventTitle = (evData?.title as string | undefined) ?? "(untitled event)";
   const requiredHeadcount =
-    (evRes.data?.required_headcount as number | undefined) ?? 0;
+    (evData?.required_headcount as number | undefined) ?? 0;
   const currentEventStatus =
-    (evRes.data?.status as string | undefined) ?? "scheduled";
+    (evData?.status as string | undefined) ?? "scheduled";
 
   const newInviteStatus = mapActionToInviteStatus(action, invite.status);
   if (action === "cancel" && newInviteStatus === null) {
@@ -197,115 +313,142 @@ export async function submitRsvpResponseImpl(
   const nowIso = new Date().toISOString();
   const oldStatus = invite.status;
 
-  if (newInviteStatus) {
-    const upd = await admin
-      .from("event_invites")
-      .update({
-        status: newInviteStatus,
-        response_note: note ?? null,
-        responded_at: nowIso,
-        updated_at: nowIso,
-      })
-      .eq("id", invite.invite_id);
-    if (upd.error) {
-      return {
-        ok: false,
-        error: `Could not save your response: ${upd.error.message}`,
-      };
-    }
-  } else if (note !== undefined && note !== null) {
-    const upd = await admin
-      .from("event_invites")
-      .update({
-        response_note: note,
-        updated_at: nowIso,
-      })
-      .eq("id", invite.invite_id);
-    if (upd.error) {
-      return { ok: false, error: `Could not save your note: ${upd.error.message}` };
-    }
-  }
-
-  await admin.from("invite_response_history").insert({
-    invite_id: invite.invite_id,
-    event_id: invite.event_id,
-    staff_member_id: invite.staff_member_id,
-    old_status: oldStatus,
-    new_status: newInviteStatus ?? oldStatus,
-    response_note: note ?? null,
-    actor_type: "responder_token",
-  });
-
-  if (action === "accept") {
-    const existing = await admin
-      .from("event_assignments")
-      .select("id, status")
-      .eq("event_id", invite.event_id)
-      .eq("staff_member_id", invite.staff_member_id)
-      .maybeSingle();
-    if (existing.data?.id) {
-      await admin
-        .from("event_assignments")
+  try {
+    if (newInviteStatus) {
+      const upd = await admin
+        .from("event_invites")
         .update({
-          status: "confirmed",
-          confirmed_at: nowIso,
-          cancelled_at: null,
+          status: newInviteStatus,
+          response_note: note ?? null,
+          responded_at: nowIso,
           updated_at: nowIso,
         })
-        .eq("id", existing.data.id);
-    } else {
-      const insErr = await admin.from("event_assignments").insert({
-        event_id: invite.event_id,
-        staff_member_id: invite.staff_member_id,
-        invite_id: invite.invite_id,
-        status: "confirmed",
-        confirmed_at: nowIso,
-      });
-      if (insErr.error && insErr.error.code !== "23505") {
-        console.warn(
-          `[rsvp] assignment insert failed: ${insErr.error.message}`,
-        );
+        .eq("id", invite.invite_id);
+      if (upd.error) {
+        console.error("[rsvp] invite update error:", upd.error.message);
+        return { ok: false, error: PUBLIC_SAVE_ERROR };
+      }
+    } else if (note !== undefined && note !== null) {
+      const upd = await admin
+        .from("event_invites")
+        .update({
+          response_note: note,
+          updated_at: nowIso,
+        })
+        .eq("id", invite.invite_id);
+      if (upd.error) {
+        console.error("[rsvp] invite note update error:", upd.error.message);
+        return { ok: false, error: PUBLIC_SAVE_ERROR };
       }
     }
-  } else if (action === "cancel" || action === "decline") {
-    const existing = await admin
-      .from("event_assignments")
-      .select("id")
-      .eq("event_id", invite.event_id)
-      .eq("staff_member_id", invite.staff_member_id)
-      .maybeSingle();
-    if (existing.data?.id) {
-      await admin
+
+    await admin.from("invite_response_history").insert({
+      invite_id: invite.invite_id,
+      event_id: invite.event_id,
+      staff_member_id: invite.staff_member_id,
+      old_status: oldStatus,
+      new_status: newInviteStatus ?? oldStatus,
+      response_note: note ?? null,
+      actor_type: "responder_token",
+    });
+
+    if (action === "accept") {
+      const existing = await admin
         .from("event_assignments")
-        .update({
-          status: "cancelled",
-          cancelled_at: nowIso,
-          cancellation_reason:
-            action === "cancel" ? "member_cancelled" : "member_declined",
-          updated_at: nowIso,
-        })
-        .eq("id", existing.data.id);
+        .select("id, status")
+        .eq("event_id", invite.event_id)
+        .eq("staff_member_id", invite.staff_member_id)
+        .maybeSingle();
+      if (existing.data?.id) {
+        await admin
+          .from("event_assignments")
+          .update({
+            status: "confirmed",
+            confirmed_at: nowIso,
+            cancelled_at: null,
+            updated_at: nowIso,
+          })
+          .eq("id", existing.data.id);
+      } else {
+        const insErr = await admin.from("event_assignments").insert({
+          event_id: invite.event_id,
+          staff_member_id: invite.staff_member_id,
+          invite_id: invite.invite_id,
+          status: "confirmed",
+          confirmed_at: nowIso,
+        });
+        if (insErr.error && insErr.error.code !== "23505") {
+          console.warn(
+            `[rsvp] assignment insert failed: ${insErr.error.message}`,
+          );
+        }
+      }
+    } else if (action === "cancel" || action === "decline") {
+      const existing = await admin
+        .from("event_assignments")
+        .select("id")
+        .eq("event_id", invite.event_id)
+        .eq("staff_member_id", invite.staff_member_id)
+        .maybeSingle();
+      if (existing.data?.id) {
+        await admin
+          .from("event_assignments")
+          .update({
+            status: "cancelled",
+            cancelled_at: nowIso,
+            cancellation_reason:
+              action === "cancel" ? "member_cancelled" : "member_declined",
+            updated_at: nowIso,
+          })
+          .eq("id", existing.data.id);
+      }
     }
+
+    if (action !== "update_note") {
+      await admin
+        .from("rsvp_tokens")
+        .update({ used_at: nowIso })
+        .eq("id", invite.token_id);
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error("[rsvp] submit DB error:", msg);
+    return { ok: false, error: PUBLIC_SAVE_ERROR };
   }
 
-  if (action !== "update_note") {
-    await admin
-      .from("rsvp_tokens")
-      .update({ used_at: nowIso })
-      .eq("id", invite.token_id);
+  let coverage: Coverage;
+  try {
+    coverage = await recomputeCoverage(admin, invite.event_id, requiredHeadcount);
+  } catch (err) {
+    console.error("[rsvp] coverage recompute threw:", err);
+    // Fall through with a neutral coverage shape — we already saved the
+    // primary response above.
+    coverage = {
+      confirmed: 0,
+      pending: 0,
+      declined: 0,
+      cancelled: 0,
+      partial: 0,
+      short: requiredHeadcount,
+      surplus: 0,
+      needed: requiredHeadcount,
+    };
   }
 
-  const coverage = await recomputeCoverage(admin, invite.event_id, requiredHeadcount);
-  const nextStatus = statusForCoverage(
-    currentEventStatus as Parameters<typeof statusForCoverage>[0],
-    coverage,
-    true,
-  );
-  if (nextStatus !== currentEventStatus) {
-    await admin
-      .from("events")
-      .update({ status: nextStatus, updated_at: nowIso })
-      .eq("id", invite.event_id);
+  try {
+    const nextStatus = statusForCoverage(
+      currentEventStatus as Parameters<typeof statusForCoverage>[0],
+      coverage,
+      true,
+    );
+    if (nextStatus !== currentEventStatus) {
+      await admin
+        .from("events")
+        .update({ status: nextStatus, updated_at: nowIso })
+        .eq("id", invite.event_id);
+    }
+  } catch (err) {
+    console.error("[rsvp] event status update threw:", err);
   }
 
   try {

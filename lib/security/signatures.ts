@@ -29,6 +29,23 @@ export function constantTimeEqual(a: string, b: string): boolean {
 // Algorithm: HMAC-SHA1 over (url + sortedKey1value1 + sortedKey2value2 + …),
 // base64-encoded. See https://www.twilio.com/docs/usage/security
 // We implement it ourselves so the verifier works in any runtime.
+//
+// REPLAY-WINDOW LIMITATION (SECURITY_AUDIT.md M2):
+// Twilio's v1 signature scheme does NOT include a timestamp header, so we
+// have no signed `iat`/`exp` to validate freshness against. As a result, a
+// captured signed request can be replayed indefinitely against this verifier.
+// Mitigations that DO live elsewhere in the codebase:
+//   - status-callback events are upserted into `message_events` keyed on
+//     (provider, provider_message_id, event_type) so duplicates are no-ops.
+//   - inbound STOP/HELP/START side-effects in `processTwilioInbound` are
+//     NOT yet idempotent — see provider-webhooks.ts. The recommended hard
+//     fix is a UNIQUE INDEX on (provider, provider_message_id) for inbound
+//     events so a replayed POST trips a 23505 in `message_events`.
+//   - If a Twilio webhook replay is suspected (or `TWILIO_AUTH_TOKEN` is
+//     ever exposed in logs, a bug report, a cached deploy URL, etc.):
+//     ROTATE `TWILIO_AUTH_TOKEN` in the Twilio console immediately and
+//     update the Vercel env var. Old signatures become invalid the moment
+//     the auth token is rotated.
 
 type VerifyTwilioInput = {
   signature: string | null | undefined;
