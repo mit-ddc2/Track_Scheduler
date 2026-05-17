@@ -7,6 +7,7 @@ const configs = [
   {
     ignores: [
       ".next/**",
+      ".claude/**",
       "node_modules/**",
       "out/**",
       "build/**",
