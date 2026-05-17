@@ -503,6 +503,24 @@ export type AttendanceRecordUpdate = Partial<
   Omit<AttendanceRecordRow, "id" | "event_id" | "staff_member_id" | "created_at">
 >;
 
+// ─── Mock SMS log (dev / E2E only) ───────────────────────────────────────
+
+export type MockSentSmsRow = {
+  id: string;
+  to_value: string;
+  body: string;
+  provider_message_id: string;
+  created_at: string;
+};
+
+export type MockSentSmsInsert = {
+  id?: string;
+  to_value: string;
+  body: string;
+  provider_message_id: string;
+  created_at?: string;
+};
+
 type Rel = [];
 
 export type Database = {
@@ -687,6 +705,12 @@ export type Database = {
         Row: AttendanceRecordRow;
         Insert: AttendanceRecordInsert;
         Update: AttendanceRecordUpdate;
+        Relationships: Rel;
+      };
+      mock_sent_sms: {
+        Row: MockSentSmsRow;
+        Insert: MockSentSmsInsert;
+        Update: Partial<MockSentSmsRow>;
         Relationships: Rel;
       };
     };

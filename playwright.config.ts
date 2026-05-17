@@ -15,7 +15,10 @@ const hasSecrets = !!(
 
 export default defineConfig({
   testDir: "./e2e",
-  fullyParallel: true,
+  // Tests share a single owner profile + serial cleanup, so run them
+  // sequentially to avoid auth/race interference.
+  fullyParallel: false,
+  workers: 1,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,
   reporter: process.env.CI ? "github" : "list",
@@ -35,6 +38,11 @@ export default defineConfig({
         url: baseURL,
         reuseExistingServer: !process.env.CI,
         timeout: 120_000,
+        // Force the mock SMS provider so E2E never touches Twilio. The
+        // server reads MESSAGING_PROVIDER inside lib/messaging/send-sms.ts.
+        env: {
+          MESSAGING_PROVIDER: "mock",
+        },
       }
     : undefined,
 });
