@@ -82,12 +82,15 @@ After clicking: 302 → `/dashboard`, auth cookie set on the domain.
 
 ## Test + validation coverage
 
-- **Unit tests**: **309 passing across 35 test files** (final count after all autonomous merges)
+- **Unit tests**: **321 passing across 38 test files** (final count after all autonomous merges including final polish)
 - **Playwright E2E**: 2 scenarios (happy path + replacements). Skips without `SUPABASE_SECRET_KEY`; runs end-to-end against the dev server when secrets are present. Mock SMS lets the full SMS path complete.
 - **Security audit**: full OWASP review done — `SECURITY_AUDIT.md` at repo root. All 4 HIGH and 2 of 6 MEDIUM findings **fixed** and merged.
 - **Performance + accessibility audit**: `PERFORMANCE_AND_A11Y_AUDIT.md` at repo root. All 3 HIGH perf + all 4 HIGH a11y findings **fixed** and merged (plus the MEDIUM dashboard parallelization + new index migration).
 - **Smoke test**: `bash scripts/smoke-test.sh` — 8 checks against the live URL. **Currently passing 8/8.**
-- **Routes built**: 35 (full route list visible in `pnpm build` output)
+- **Routes built**: 36 (added `/api/admin/reset-demo` for the demo reset button)
+- **PWA manifest**: `public/manifest.json` + 192/512 icons + apple-touch-icon. App is installable to home-screen with the Pit Wall theme color.
+- **Custom 404**: `/this-does-not-exist` (or any unknown path) renders a Pit Wall "404 · LOST" page with "Back to dashboard" + "Go to login" CTAs.
+- **Reset-demo button** on `/dashboard/settings`: wipes + re-seeds the canonical 6-staff/3-event fixture. Type-RESET confirmation modal. Gated by `requireOwner()` + `CRON_SECRET` key + `DEV_RESET_DEMO_ENABLED=true` env var (set in Vercel prod).
 - **Security hardening validated live**: open-redirect attempt to `?next=//evil.tld` AND `?next=https://evil.tld` both correctly rejected (redirect to `/login?error=callback` instead of off-site). Dev-login route 403s without the gating secret. CRON_SECRET-protected drain endpoint 401s without bearer token.
 - **Live messaging pipeline validated end-to-end**: real outbox-drain cycle persisted both a Resend email (provider id captured) and a mock SMS row (`mock_mpa7sh2z_ae1320`). Full RSVP loop (token → page → accept → 7 atomic DB writes) verified against production infrastructure.
 
