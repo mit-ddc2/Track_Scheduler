@@ -5,7 +5,6 @@ import { useState, useTransition } from "react";
 
 import { Btn } from "@/components/ui/Btn";
 import { Card } from "@/components/ui/Card";
-import { Chip } from "@/components/ui/Chip";
 import type {
   CrewRole,
   PreferredContactMethod,
@@ -490,5 +489,3 @@ function Select({
   );
 }
 
-// Avoid unused-import lint complaint
-void Chip;

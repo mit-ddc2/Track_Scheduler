@@ -109,3 +109,187 @@ describe("archiveStaffMember", () => {
     );
   });
 });
+
+describe("updateStaffMember", () => {
+  it("requires owner before mutating", async () => {
+    requireOwnerMock.mockImplementation(() => {
+      throw new Error("__REDIRECT__:/login");
+    });
+    const { updateStaffMember } = await import("./actions");
+    await expect(
+      updateStaffMember("staff-1", {
+        display_name: "x",
+        role_ids: [],
+        qualification_ids: [],
+        preferred_contact: "both",
+        active: true,
+        consent_sms: false,
+        consent_email: false,
+      } as Parameters<typeof updateStaffMember>[1]),
+    ).rejects.toThrow("__REDIRECT__:/login");
+  });
+
+  it("returns Zod error when payload primary_role_id is not in role_ids", async () => {
+    requireOwnerMock.mockResolvedValue({
+      user: { id: "owner-id", email: "owner@x" },
+      profile: { id: "owner-id", is_owner: true },
+    });
+    const { updateStaffMember } = await import("./actions");
+    const result = await updateStaffMember("staff-1", {
+      display_name: "Jane",
+      role_ids: ["11111111-1111-1111-1111-111111111111"],
+      // Different uuid — not in role_ids, should fail refine.
+      primary_role_id: "22222222-2222-2222-2222-222222222222",
+      qualification_ids: [],
+      preferred_contact: "both",
+      active: true,
+      consent_sms: false,
+      consent_email: false,
+    } as Parameters<typeof updateStaffMember>[1]);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.fieldErrors?.primary_role_id?.[0]).toBeTruthy();
+    }
+  });
+});
+
+describe("importRosterCsv", () => {
+  it("requires owner before mutating", async () => {
+    requireOwnerMock.mockImplementation(() => {
+      throw new Error("__REDIRECT__:/login");
+    });
+    const { importRosterCsv } = await import("./actions");
+    await expect(importRosterCsv([])).rejects.toThrow("__REDIRECT__:/login");
+  });
+
+  it("rejects payloads larger than the 5000-row cap", async () => {
+    requireOwnerMock.mockResolvedValue({
+      user: { id: "owner-id", email: "owner@x" },
+      profile: { id: "owner-id", is_owner: true },
+    });
+    const { importRosterCsv } = await import("./actions");
+    const { IMPORT_ROW_LIMIT } = await import("@/lib/roster/import-limits");
+    expect(IMPORT_ROW_LIMIT).toBe(5000);
+    // 5001 minimal stubs.
+    const big = Array.from({ length: IMPORT_ROW_LIMIT + 1 }, (_, i) => ({
+      rowNumber: i + 2,
+      decision: "create" as const,
+      matchedStaffMemberId: null,
+      displayName: `Row ${i}`,
+      firstName: "",
+      lastName: "",
+      emailNormalized: "",
+      phoneE164: "",
+      preferredContact: "manual_only" as const,
+      primaryRole: "",
+      roles: [],
+      qualifications: [],
+      notes: "",
+      active: true,
+    }));
+    const result = await importRosterCsv(big);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.message).toMatch(/5000/);
+    }
+  });
+});
+
+describe("importRosterCsv UPDATE behavior", () => {
+  it("never deletes existing contact_methods/roles/quals on update (preserves consent)", async () => {
+    // Replace `from()` on the shared stub with a tracker that records every
+    // table-op pair so we can assert the absence of a destructive call.
+    const opLog: Array<{ table: string; op: string }> = [];
+    function buildTrackingChain(table: string): Record<string, unknown> {
+      const chain: Record<string, unknown> = {};
+      const record = (op: string) => {
+        opLog.push({ table, op });
+        return chain;
+      };
+      chain.select = vi.fn(() => record("select"));
+      chain.insert = vi.fn(() => record("insert"));
+      chain.update = vi.fn(() => record("update"));
+      chain.upsert = vi.fn(() => record("upsert"));
+      chain.delete = vi.fn(() => record("delete"));
+      chain.eq = vi.fn(() => chain);
+      chain.order = vi.fn(() => chain);
+      chain.single = vi.fn(async () => ({ data: { id: "matched-id" }, error: null }));
+      chain.maybeSingle = vi.fn(async () => ({ data: { id: "matched-id" }, error: null }));
+      chain.then = undefined;
+      return chain;
+    }
+    const originalFrom = supabaseStub.from;
+    // Override with a tracker that accepts the table name.
+    (supabaseStub as { from: unknown }).from = vi.fn((table: string) =>
+      buildTrackingChain(table),
+    );
+
+    requireOwnerMock.mockResolvedValue({
+      user: { id: "owner-id", email: "owner@x" },
+      profile: { id: "owner-id", is_owner: true },
+    });
+
+    try {
+      const { importRosterCsv } = await import("./actions");
+      await importRosterCsv([
+        {
+          rowNumber: 2,
+          decision: "update",
+          matchedStaffMemberId: "matched-id",
+          displayName: "Existing",
+          firstName: "",
+          lastName: "",
+          emailNormalized: "new@example.com",
+          phoneE164: "+16135550199",
+          preferredContact: "both",
+          primaryRole: "",
+          roles: [],
+          qualifications: [],
+          notes: "",
+          active: true,
+        },
+      ]);
+
+      // Critical assertion: on UPDATE we MUST NOT delete from these tables.
+      const contactDeletes = opLog.filter(
+        (o) => o.table === "staff_contact_methods" && o.op === "delete",
+      );
+      const roleDeletes = opLog.filter(
+        (o) => o.table === "staff_roles" && o.op === "delete",
+      );
+      const qualDeletes = opLog.filter(
+        (o) => o.table === "staff_qualifications" && o.op === "delete",
+      );
+      expect(contactDeletes).toHaveLength(0);
+      expect(roleDeletes).toHaveLength(0);
+      expect(qualDeletes).toHaveLength(0);
+      // And we should be using upsert (merge) for contacts.
+      const contactUpserts = opLog.filter(
+        (o) => o.table === "staff_contact_methods" && o.op === "upsert",
+      );
+      expect(contactUpserts.length).toBeGreaterThan(0);
+    } finally {
+      (supabaseStub as { from: unknown }).from = originalFrom;
+    }
+  });
+});
+
+describe("archiveRole / archiveQualification auth guards", () => {
+  it("archiveRole requires owner", async () => {
+    requireOwnerMock.mockImplementation(() => {
+      throw new Error("__REDIRECT__:/login");
+    });
+    const { archiveRole } = await import("./actions");
+    await expect(archiveRole("role-1")).rejects.toThrow("__REDIRECT__:/login");
+  });
+
+  it("archiveQualification requires owner", async () => {
+    requireOwnerMock.mockImplementation(() => {
+      throw new Error("__REDIRECT__:/login");
+    });
+    const { archiveQualification } = await import("./actions");
+    await expect(archiveQualification("qual-1")).rejects.toThrow(
+      "__REDIRECT__:/login",
+    );
+  });
+});

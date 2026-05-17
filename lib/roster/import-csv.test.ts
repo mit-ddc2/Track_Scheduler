@@ -85,4 +85,25 @@ describe("dedupeAgainstExisting", () => {
     const result = dedupeAgainstExisting(rows, []);
     expect(result.every((r) => r.status === "new")).toBe(true);
   });
+
+  it("marks rows with a name but no contact as warning (not invalid)", () => {
+    const csv = `display_name,email,phone\nNo Contact Person,,\n`;
+    const { rows } = parseRosterCsvText(csv);
+    const result = dedupeAgainstExisting(rows, []);
+    expect(result).toHaveLength(1);
+    expect(result[0].status).toBe("warning");
+    expect(result[0].defaultDecision).toBe("create");
+    expect(result[0].warnings.length).toBeGreaterThan(0);
+    expect(result[0].warnings[0]).toMatch(/manual_only/);
+  });
+
+  it("treats rows with no name AND no contact as truly invalid", () => {
+    const csv = `display_name,email,phone\n,,\n`;
+    const { rows } = parseRosterCsvText(csv);
+    // Empty row may be skipped by papaparse — guard.
+    if (rows.length === 0) return;
+    const result = dedupeAgainstExisting(rows, []);
+    expect(result[0].status).toBe("invalid");
+    expect(result[0].defaultDecision).toBe("skip");
+  });
 });

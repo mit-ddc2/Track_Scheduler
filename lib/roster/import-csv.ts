@@ -50,7 +50,7 @@ export type ContactSummary = {
   contact_keys: string[]; // dedupe keys: e.g. "email:foo@bar.com", "sms:+16135550142"
 };
 
-export type RowStatus = "new" | "duplicate" | "invalid";
+export type RowStatus = "new" | "duplicate" | "invalid" | "warning";
 export type RowDecision = "create" | "update" | "skip";
 
 export type RowWithStatus = ParsedRow & {
@@ -59,6 +59,8 @@ export type RowWithStatus = ParsedRow & {
   matchedDisplayName: string | null;
   defaultDecision: RowDecision;
   errors: string[];
+  /** Owner-facing notes (e.g. "no contact info — will be manual_only"). */
+  warnings: string[];
 };
 
 /**
@@ -203,21 +205,42 @@ export function dedupeAgainstExisting(
     const fatalErrors = row.errors.filter((e) =>
       e.startsWith("display_name:") || e.startsWith("email:"),
     );
-    const isInvalid = fatalErrors.length > 0 || (!hasContact && row.preferredContact === "manual_only" && !row.displayName);
+    // INVALID = truly unusable: no name AND no contact (and any explicit
+    // fatal error like an unparseable email). The row can't become a
+    // useful staff member, so it's skipped by default.
+    const isInvalid =
+      fatalErrors.length > 0 || (!hasContact && !row.displayName);
+    // WARNING = has a name but no usable contact. We can still create the
+    // record (preferred_contact will fall back to manual_only with
+    // consent='unknown'), but the owner should know it's a stub.
+    const warnings: string[] = [];
+    if (!isInvalid && !hasContact && row.displayName) {
+      warnings.push(
+        "no phone or email — will be created as manual_only (consent unknown)",
+      );
+    }
 
     let status: RowStatus;
     if (isInvalid) status = "invalid";
     else if (match) status = "duplicate";
+    else if (warnings.length > 0) status = "warning";
     else status = "new";
+
+    const defaultDecision: RowDecision =
+      status === "invalid"
+        ? "skip"
+        : status === "duplicate"
+          ? "update"
+          : "create";
 
     return {
       ...row,
       status,
       matchedStaffMemberId: match?.staff_member_id ?? null,
       matchedDisplayName: match?.display_name ?? null,
-      defaultDecision:
-        status === "invalid" ? "skip" : status === "duplicate" ? "update" : "create",
+      defaultDecision,
       errors: row.errors,
+      warnings,
     };
   });
 }

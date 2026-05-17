@@ -14,10 +14,12 @@ import type {
 
 type ContactMethodInsert =
   Database["public"]["Tables"]["staff_contact_methods"]["Insert"];
+type StaffMemberUpdate =
+  Database["public"]["Tables"]["staff_members"]["Update"];
 import { writeAudit } from "@/lib/db/audit";
 import { requireOwner } from "@/lib/auth/require-owner";
+import { IMPORT_ROW_LIMIT } from "@/lib/roster/import-limits";
 import {
-  contactDedupeKey,
   isValidEmail,
   normalizeEmail,
   normalizePhone,
@@ -278,33 +280,33 @@ export async function updateStaffMember(
     Boolean(email),
   );
 
+  // PATCH-friendly: only set fields the caller actually supplied. Always
+  // bump updated_by/updated_at on any successful update.
+  const memberPatch: StaffMemberUpdate = {
+    updated_by: session.user.id,
+    updated_at: new Date().toISOString(),
+    preferred_contact: preferredContact,
+  };
+  if (data.display_name !== undefined) memberPatch.display_name = data.display_name;
+  if (data.first_name !== undefined) memberPatch.first_name = data.first_name || null;
+  if (data.last_name !== undefined) memberPatch.last_name = data.last_name || null;
+  if (data.notes !== undefined) memberPatch.notes = data.notes || null;
+  if (data.active !== undefined) memberPatch.active = data.active;
+
   const { error: updErr } = await supabase
     .from("staff_members")
-    .update({
-      display_name: data.display_name,
-      first_name: data.first_name || null,
-      last_name: data.last_name || null,
-      preferred_contact: preferredContact,
-      active: data.active,
-      notes: data.notes || null,
-      updated_by: session.user.id,
-      updated_at: new Date().toISOString(),
-    })
+    .update(memberPatch)
     .eq("id", staffId);
   if (updErr) {
     return { ok: false, message: `Could not update staff: ${explain(updErr)}` };
   }
 
-  // Replace contact methods (simple strategy for MVP — delete + reinsert).
-  await supabase
-    .from("staff_contact_methods")
-    .delete()
-    .eq("staff_member_id", staffId);
-
-  const contactInserts: ContactMethodInsert[] = [];
+  // Build the contact-method swap payload. All three relations are swapped
+  // inside a single Postgres transaction (RPC below) so a mid-flight failure
+  // can't leave the member with no contacts/roles/quals.
+  const contactPayload: Array<Record<string, unknown>> = [];
   if (phone?.e164 && phone.valid) {
-    contactInserts.push({
-      staff_member_id: staffId,
+    contactPayload.push({
       channel: "sms",
       value: phone.formatted || phone.e164,
       normalized_value: phone.e164,
@@ -316,8 +318,7 @@ export async function updateStaffMember(
     });
   }
   if (email) {
-    contactInserts.push({
-      staff_member_id: staffId,
+    contactPayload.push({
       channel: "email",
       value: email,
       normalized_value: email,
@@ -330,48 +331,33 @@ export async function updateStaffMember(
       consented_at: data.consent_email ? new Date().toISOString() : null,
     });
   }
-  if (contactInserts.length) {
-    const { error: cmErr } = await supabase
-      .from("staff_contact_methods")
-      .insert(contactInserts);
-    if (cmErr) {
-      return {
-        ok: false,
-        message: `Staff updated but contacts failed: ${explain(cmErr)}`,
-      };
-    }
-  }
 
-  // Replace roles.
-  await supabase.from("staff_roles").delete().eq("staff_member_id", staffId);
-  if (data.role_ids.length) {
-    const rows = data.role_ids.map((role_id) => ({
-      staff_member_id: staffId,
-      role_id,
-      is_primary: data.primary_role_id === role_id,
-    }));
-    await supabase.from("staff_roles").insert(rows);
-  }
+  const qualPayload = data.qualification_ids.map((qualification_id) => ({
+    qualification_id,
+  }));
 
-  // Replace qualifications.
-  await supabase
-    .from("staff_qualifications")
-    .delete()
-    .eq("staff_member_id", staffId);
-  if (data.qualification_ids.length) {
-    const rows = data.qualification_ids.map((qualification_id) => ({
-      staff_member_id: staffId,
-      qualification_id,
-    }));
-    await supabase.from("staff_qualifications").insert(rows);
+  const { error: rpcErr } = await supabase.rpc("update_staff_relations_tx", {
+    p_staff_id: staffId,
+    p_contact_methods: contactPayload,
+    p_role_ids: data.role_ids,
+    p_primary_role_id: data.primary_role_id ?? null,
+    p_qualification_ids: qualPayload,
+  });
+  if (rpcErr) {
+    return {
+      ok: false,
+      message: `Staff updated but relations failed (rolled back): ${explain(rpcErr)}`,
+    };
   }
 
   await writeAudit({
     action: "staff.update",
     entity_type: "staff_member",
     entity_id: staffId,
-    summary: `Updated staff member ${data.display_name}`,
-    after: { display_name: data.display_name },
+    summary: data.display_name
+      ? `Updated staff member ${data.display_name}`
+      : `Updated staff member ${staffId}`,
+    after: { display_name: data.display_name ?? null },
     actorId: session.user.id,
   });
 
@@ -469,6 +455,12 @@ export async function importRosterCsv(
   rows: ImportRowInput[],
 ): Promise<ActionResult<ImportSummary>> {
   const session = await requireOwner();
+  if (rows.length > IMPORT_ROW_LIMIT) {
+    return {
+      ok: false,
+      message: `CSV exceeds ${IMPORT_ROW_LIMIT}-row limit (got ${rows.length}). Please split the file.`,
+    };
+  }
   const supabase = await createClient();
 
   // Resolve role / qualification name → id lookups in bulk.
@@ -532,11 +524,10 @@ export async function importRosterCsv(
         summary.created++;
       }
 
-      // Replace contacts.
-      await supabase
-        .from("staff_contact_methods")
-        .delete()
-        .eq("staff_member_id", staffId);
+      // Contacts: on UPDATE, merge — never destroy existing rows (would
+      // wipe verified consents). On CREATE, the staff member is brand new
+      // so a simple insert is fine. The merge uses (channel, normalized_value)
+      // which is the table's unique key.
       const contactInserts: ContactMethodInsert[] = [];
       if (row.phoneE164) {
         contactInserts.push({
@@ -561,10 +552,22 @@ export async function importRosterCsv(
         });
       }
       if (contactInserts.length) {
-        await supabase.from("staff_contact_methods").insert(contactInserts);
+        if (row.decision === "update") {
+          // Upsert by (channel, normalized_value) so we don't clobber
+          // unrelated rows. ignoreDuplicates so an existing row with a
+          // verified consent isn't downgraded to "unknown".
+          await supabase
+            .from("staff_contact_methods")
+            .upsert(contactInserts, {
+              onConflict: "channel,normalized_value",
+              ignoreDuplicates: true,
+            });
+        } else {
+          await supabase.from("staff_contact_methods").insert(contactInserts);
+        }
       }
 
-      // Roles.
+      // Roles. On UPDATE, ADD missing ones; don't remove existing ones.
       const roleIds: string[] = [];
       for (const name of [row.primaryRole, ...row.roles]) {
         if (!name) continue;
@@ -572,39 +575,47 @@ export async function importRosterCsv(
         if (id && !roleIds.includes(id)) roleIds.push(id);
       }
       if (roleIds.length) {
-        await supabase
-          .from("staff_roles")
-          .delete()
-          .eq("staff_member_id", staffId);
         const primaryId =
           row.primaryRole &&
           roleByName.get(row.primaryRole.trim().toLowerCase());
-        await supabase.from("staff_roles").insert(
-          roleIds.map((role_id) => ({
-            staff_member_id: staffId,
-            role_id,
-            is_primary: role_id === primaryId,
-          })),
-        );
+        const roleRows = roleIds.map((role_id) => ({
+          staff_member_id: staffId,
+          role_id,
+          is_primary: role_id === primaryId,
+        }));
+        if (row.decision === "update") {
+          await supabase
+            .from("staff_roles")
+            .upsert(roleRows, {
+              onConflict: "staff_member_id,role_id",
+              ignoreDuplicates: true,
+            });
+        } else {
+          await supabase.from("staff_roles").insert(roleRows);
+        }
       }
 
-      // Quals.
+      // Quals. Same merge-on-update policy as roles.
       const qualIds: string[] = [];
       for (const name of row.qualifications) {
         const id = qualByName.get(name.trim().toLowerCase());
         if (id && !qualIds.includes(id)) qualIds.push(id);
       }
       if (qualIds.length) {
-        await supabase
-          .from("staff_qualifications")
-          .delete()
-          .eq("staff_member_id", staffId);
-        await supabase.from("staff_qualifications").insert(
-          qualIds.map((qualification_id) => ({
-            staff_member_id: staffId,
-            qualification_id,
-          })),
-        );
+        const qualRows = qualIds.map((qualification_id) => ({
+          staff_member_id: staffId,
+          qualification_id,
+        }));
+        if (row.decision === "update") {
+          await supabase
+            .from("staff_qualifications")
+            .upsert(qualRows, {
+              onConflict: "staff_member_id,qualification_id",
+              ignoreDuplicates: true,
+            });
+        } else {
+          await supabase.from("staff_qualifications").insert(qualRows);
+        }
       }
     } catch (err) {
       summary.invalid++;
@@ -819,5 +830,3 @@ function derivePreferredContact(
   return preferred;
 }
 
-// re-export for client consumers that need the matched key shape
-export { contactDedupeKey };

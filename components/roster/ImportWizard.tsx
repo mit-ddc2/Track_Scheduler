@@ -13,6 +13,7 @@ import {
   type RowDecision,
   type RowWithStatus,
 } from "@/lib/roster/import-csv";
+import { IMPORT_MAX_BYTES } from "@/lib/roster/import-limits";
 import {
   importRosterCsv,
   type ImportRowInput,
@@ -40,6 +41,15 @@ export function ImportWizard({ existingContacts }: ImportWizardProps) {
     if (!file) return;
     if (!file.name.toLowerCase().endsWith(".csv")) {
       setError("Please select a .csv file.");
+      return;
+    }
+    // Safari sometimes reports empty file.type for CSVs; allow "" or "text/csv".
+    if (file.type && file.type !== "text/csv" && file.type !== "application/vnd.ms-excel") {
+      setError("Please select a .csv file.");
+      return;
+    }
+    if (file.size > IMPORT_MAX_BYTES) {
+      setError("CSV must be under 1 MB.");
       return;
     }
     try {
@@ -133,6 +143,7 @@ export function ImportWizard({ existingContacts }: ImportWizardProps) {
           <Chip>{rows.length} rows</Chip>
           <Chip tone="info">{counts.new} new</Chip>
           <Chip tone="warn">{counts.duplicate} dup</Chip>
+          <Chip tone="warn">{counts.warning} warning</Chip>
           <Chip tone="bad">{counts.invalid} invalid</Chip>
         </Card>
 
@@ -164,7 +175,7 @@ export function ImportWizard({ existingContacts }: ImportWizardProps) {
                       tone={
                         r.status === "invalid"
                           ? "bad"
-                          : r.status === "duplicate"
+                          : r.status === "duplicate" || r.status === "warning"
                             ? "warn"
                             : "info"
                       }
@@ -181,6 +192,18 @@ export function ImportWizard({ existingContacts }: ImportWizardProps) {
                         }}
                       >
                         {r.errors.join(" · ")}
+                      </div>
+                    )}
+                    {r.warnings.length > 0 && (
+                      <div
+                        className="mono"
+                        style={{
+                          fontSize: 10,
+                          color: "var(--warn)",
+                          marginTop: 4,
+                        }}
+                      >
+                        {r.warnings.join(" · ")}
                       </div>
                     )}
                     {r.matchedDisplayName && (
@@ -331,11 +354,13 @@ function Td({
 function countStatuses(rows: RowWithStatus[]) {
   let n = 0,
     d = 0,
+    w = 0,
     i = 0;
   for (const r of rows) {
     if (r.status === "new") n++;
     else if (r.status === "duplicate") d++;
+    else if (r.status === "warning") w++;
     else i++;
   }
-  return { new: n, duplicate: d, invalid: i };
+  return { new: n, duplicate: d, warning: w, invalid: i };
 }

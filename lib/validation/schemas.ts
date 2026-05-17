@@ -146,40 +146,66 @@ const emailInputSchema = z
   .optional()
   .nullable();
 
-export const staffMemberCreateSchema = z
-  .object({
-    display_name: z
-      .string()
-      .trim()
-      .min(1, { message: "Display name is required" })
-      .max(80, { message: "Display name is too long" }),
-    first_name: z.string().trim().max(40).optional().nullable(),
-    last_name: z.string().trim().max(40).optional().nullable(),
-    phone: phoneInputSchema,
-    email: emailInputSchema,
-    preferred_contact: preferredContactSchema.default("both"),
-    notes: z.string().trim().max(2000).optional().nullable(),
-    active: z.boolean().default(true),
-    role_ids: z.array(z.string().uuid()).default([]),
-    primary_role_id: z.string().uuid().optional().nullable(),
-    qualification_ids: z.array(z.string().uuid()).default([]),
-    consent_sms: z.boolean().default(false),
-    consent_sms_source: consentSourceSchema.optional().nullable(),
-    consent_email: z.boolean().default(false),
-    consent_email_source: consentSourceSchema.optional().nullable(),
-  })
-  .refine(
-    (data) =>
-      !data.primary_role_id || data.role_ids.includes(data.primary_role_id),
-    {
-      path: ["primary_role_id"],
-      message: "Primary role must be one of the selected roles",
-    },
-  );
+/** Shared object shape so create + update can both extend it. */
+const staffMemberObjectSchema = z.object({
+  display_name: z
+    .string()
+    .trim()
+    .min(1, { message: "Display name is required" })
+    .max(80, { message: "Display name is too long" }),
+  first_name: z.string().trim().max(40).optional().nullable(),
+  last_name: z.string().trim().max(40).optional().nullable(),
+  phone: phoneInputSchema,
+  email: emailInputSchema,
+  preferred_contact: preferredContactSchema.default("both"),
+  notes: z.string().trim().max(2000).optional().nullable(),
+  active: z.boolean().default(true),
+  role_ids: z.array(z.string().uuid()).default([]),
+  primary_role_id: z.string().uuid().optional().nullable(),
+  qualification_ids: z.array(z.string().uuid()).default([]),
+  consent_sms: z.boolean().default(false),
+  consent_sms_source: consentSourceSchema.optional().nullable(),
+  consent_email: z.boolean().default(false),
+  consent_email_source: consentSourceSchema.optional().nullable(),
+});
+
+const primaryRoleInRoleIds = (data: {
+  primary_role_id?: string | null;
+  role_ids?: string[];
+}) =>
+  !data.primary_role_id ||
+  (data.role_ids ?? []).includes(data.primary_role_id);
+
+const primaryRoleRefine = {
+  path: ["primary_role_id"],
+  message: "Primary role must be one of the selected roles",
+};
+
+export const staffMemberCreateSchema = staffMemberObjectSchema.refine(
+  primaryRoleInRoleIds,
+  primaryRoleRefine,
+);
 
 export type StaffMemberCreateInput = z.infer<typeof staffMemberCreateSchema>;
 
-export const staffMemberUpdateSchema = staffMemberCreateSchema;
+/**
+ * PATCH-style update: all fields optional. Defaults still apply for the
+ * boolean/array fields when omitted, so `updateStaffMember` can still read
+ * `data.role_ids.length` etc. without null-guards.
+ */
+export const staffMemberUpdateSchema = staffMemberObjectSchema
+  .partial()
+  .extend({
+    // Re-apply defaults so downstream code can rely on them being present
+    // even when the client sent a sparse PATCH payload.
+    preferred_contact: preferredContactSchema.default("both"),
+    active: z.boolean().default(true),
+    role_ids: z.array(z.string().uuid()).default([]),
+    qualification_ids: z.array(z.string().uuid()).default([]),
+    consent_sms: z.boolean().default(false),
+    consent_email: z.boolean().default(false),
+  })
+  .refine(primaryRoleInRoleIds, primaryRoleRefine);
 export type StaffMemberUpdateInput = z.infer<typeof staffMemberUpdateSchema>;
 
 export const csvRowSchema = z.object({

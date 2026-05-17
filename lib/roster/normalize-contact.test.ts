@@ -63,6 +63,24 @@ describe("normalizePhone", () => {
     const r = normalizePhone("1".repeat(40));
     expect(r.valid).toBe(false);
   });
+
+  it("accepts only-digit NANP number with CA default", () => {
+    const r = normalizePhone("6135550142");
+    expect(r.valid).toBe(true);
+    expect(r.e164).toBe("+16135550142");
+  });
+
+  it("normalizes a French (+33) number to E.164", () => {
+    const r = normalizePhone("+33 1 42 68 53 00");
+    expect(r.valid).toBe(true);
+    expect(r.e164).toBe("+33142685300");
+  });
+
+  it("normalizes an Indian (+91) mobile number to E.164", () => {
+    const r = normalizePhone("+91 98765 43210");
+    expect(r.valid).toBe(true);
+    expect(r.e164).toBe("+919876543210");
+  });
 });
 
 describe("normalizeEmail", () => {
@@ -99,6 +117,11 @@ describe("isValidEmail", () => {
 
   it("rejects empty / whitespace", () => {
     expect(isValidEmail("")).toBe(false);
+    expect(isValidEmail("   ")).toBe(false);
+  });
+
+  it("rejects an empty-string after normalization (e.g. just whitespace)", () => {
+    expect(normalizeEmail("   ")).toBe("");
     expect(isValidEmail("   ")).toBe(false);
   });
 });

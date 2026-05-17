@@ -16,7 +16,7 @@ const CSV_HEADERS = [
   "active",
 ] as const;
 
-const FORMULA_LEADERS = new Set(["=", "+", "-", "@", "\t", "\r"]);
+const FORMULA_LEADERS = new Set(["=", "+", "-", "@", "\t", "\r", "\n"]);
 
 /**
  * Escape a field for CSV. Wraps in quotes when needed, doubles internal
@@ -67,10 +67,12 @@ function rowToCsv(row: StaffListRow): string {
 export async function GET() {
   const session = await requireOwner();
   const rows = await listStaff();
+  // RFC 4180 mandates CRLF line separators for CSV. Excel/Numbers tolerate
+  // bare LF but some downstream parsers (and Outlook attachments) don't.
   const csv = [
     CSV_HEADERS.join(","),
     ...rows.map(rowToCsv),
-  ].join("\n");
+  ].join("\r\n");
 
   await writeAudit({
     action: "roster.export_csv",
