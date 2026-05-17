@@ -129,6 +129,51 @@ export type EventRequirement = {
   notes: string | null;
 };
 
+export type EventCoverageRows = {
+  invites: Array<{
+    status:
+      | "created"
+      | "invited"
+      | "accepted"
+      | "declined"
+      | "cancelled_by_member"
+      | "cancelled_by_manager"
+      | "availability_updated"
+      | "expired"
+      | "waitlisted";
+  }>;
+  assignments: Array<{
+    status: "confirmed" | "waitlisted" | "cancelled" | "completed";
+  }>;
+};
+
+/**
+ * Pull just enough invite + assignment data to compute a coverage snapshot
+ * via `computeCoverage`. Used by the event detail page in Phase 5b.
+ */
+export async function getEventCoverageRows(
+  eventId: string,
+): Promise<EventCoverageRows> {
+  const supabase = await createClient();
+  const [{ data: invites, error: invErr }, { data: assignments, error: aErr }] =
+    await Promise.all([
+      supabase
+        .from("event_invites")
+        .select("status")
+        .eq("event_id", eventId),
+      supabase
+        .from("event_assignments")
+        .select("status")
+        .eq("event_id", eventId),
+    ]);
+  if (invErr) console.warn("[events] invites query failed:", invErr.message);
+  if (aErr) console.warn("[events] assignments query failed:", aErr.message);
+  return {
+    invites: (invites ?? []) as EventCoverageRows["invites"],
+    assignments: (assignments ?? []) as EventCoverageRows["assignments"],
+  };
+}
+
 export async function listEventRequirements(
   eventId: string,
 ): Promise<EventRequirement[]> {
