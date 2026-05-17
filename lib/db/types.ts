@@ -428,6 +428,81 @@ export type RsvpTokenInsert = {
   used_at?: string | null;
 };
 
+// ─── Event assignments + attendance (Phase 7) ────────────────────────────
+
+export type AssignmentStatus =
+  | "confirmed"
+  | "waitlisted"
+  | "cancelled"
+  | "completed";
+
+export type EventAssignmentRow = {
+  id: string;
+  event_id: string;
+  staff_member_id: string;
+  invite_id: string | null;
+  status: AssignmentStatus;
+  role_id: string | null;
+  role_label: string | null;
+  requirement_id: string | null;
+  counts_toward_headcount: boolean;
+  confirmed_at: string | null;
+  cancelled_at: string | null;
+  cancellation_reason: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type AttendanceStatus =
+  | "scheduled"
+  | "worked"
+  | "no_show"
+  | "cancelled_by_member"
+  | "cancelled_by_manager"
+  | "excused";
+
+export type AttendanceRecordRow = {
+  id: string;
+  event_id: string;
+  staff_member_id: string;
+  assignment_id: string | null;
+  status: AttendanceStatus;
+  scheduled_start: string | null;
+  scheduled_end: string | null;
+  actual_start: string | null;
+  actual_end: string | null;
+  actual_hours: number | null;
+  pay_rate: number | null;
+  pay_code: string | null;
+  notes: string | null;
+  approved_by: string | null;
+  approved_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type AttendanceRecordInsert = {
+  id?: string;
+  event_id: string;
+  staff_member_id: string;
+  assignment_id?: string | null;
+  status?: AttendanceStatus;
+  scheduled_start?: string | null;
+  scheduled_end?: string | null;
+  actual_start?: string | null;
+  actual_end?: string | null;
+  actual_hours?: number | null;
+  pay_rate?: number | null;
+  pay_code?: string | null;
+  notes?: string | null;
+  approved_by?: string | null;
+  approved_at?: string | null;
+};
+
+export type AttendanceRecordUpdate = Partial<
+  Omit<AttendanceRecordRow, "id" | "event_id" | "staff_member_id" | "created_at">
+>;
+
 type Rel = [];
 
 export type Database = {
@@ -599,6 +674,21 @@ export type Database = {
         Update: Partial<RsvpTokenRow>;
         Relationships: Rel;
       };
+      event_assignments: {
+        Row: EventAssignmentRow;
+        Insert: Partial<EventAssignmentRow> & {
+          event_id: string;
+          staff_member_id: string;
+        };
+        Update: Partial<EventAssignmentRow>;
+        Relationships: Rel;
+      };
+      attendance_records: {
+        Row: AttendanceRecordRow;
+        Insert: AttendanceRecordInsert;
+        Update: AttendanceRecordUpdate;
+        Relationships: Rel;
+      };
     };
     Views: Record<string, never>;
     Functions: {
@@ -628,6 +718,8 @@ export type Database = {
       notification_status: NotificationStatus;
       outbox_status: OutboxStatus;
       invite_status: InviteStatus;
+      assignment_status: AssignmentStatus;
+      attendance_status: AttendanceStatus;
     };
     CompositeTypes: Record<string, never>;
   };

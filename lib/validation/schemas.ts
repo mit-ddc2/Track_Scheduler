@@ -113,6 +113,97 @@ export const cancelEventSchema = z.object({
 
 export type CancelEventInput = z.infer<typeof cancelEventSchema>;
 
+// ─── Attendance / payroll (Phase 7) ──────────────────────────────────────
+
+export const ATTENDANCE_STATUSES = [
+  "scheduled",
+  "worked",
+  "no_show",
+  "cancelled_by_member",
+  "cancelled_by_manager",
+  "excused",
+] as const;
+
+export type AttendanceStatusEnum = (typeof ATTENDANCE_STATUSES)[number];
+
+export const attendanceStatusSchema = z.enum(ATTENDANCE_STATUSES);
+
+/** Sets only the status — used by the cycle button on the attendance grid. */
+export const attendanceStatusUpdateSchema = z.object({
+  eventId: z.string().uuid(),
+  staffMemberId: z.string().uuid(),
+  status: attendanceStatusSchema,
+});
+
+export type AttendanceStatusUpdateInput = z.infer<
+  typeof attendanceStatusUpdateSchema
+>;
+
+/**
+ * Per-row detail edit. All payable fields are optional so the popover can
+ * patch any subset. Hours capped at 24 per shift (sanity bound — anything
+ * longer should be split across shifts); rate at 1000/hr.
+ */
+export const attendanceUpdateSchema = z.object({
+  eventId: z.string().uuid(),
+  staffMemberId: z.string().uuid(),
+  actual_start: z
+    .string()
+    .min(1)
+    .refine(
+      (s) => !Number.isNaN(new Date(s).getTime()),
+      "Must be a valid ISO timestamp",
+    )
+    .optional()
+    .nullable(),
+  actual_end: z
+    .string()
+    .min(1)
+    .refine(
+      (s) => !Number.isNaN(new Date(s).getTime()),
+      "Must be a valid ISO timestamp",
+    )
+    .optional()
+    .nullable(),
+  actual_hours: z
+    .number()
+    .min(0, "Hours cannot be negative")
+    .max(24, "Hours cannot exceed 24")
+    .optional()
+    .nullable(),
+  pay_rate: z
+    .number()
+    .min(0, "Pay rate cannot be negative")
+    .max(1000, "Pay rate cannot exceed 1000")
+    .optional()
+    .nullable(),
+  pay_code: z
+    .string()
+    .trim()
+    .max(40, "Pay code is too long")
+    .optional()
+    .nullable(),
+  notes: z
+    .string()
+    .max(2000, "Notes must be 2000 characters or fewer")
+    .optional()
+    .nullable(),
+});
+
+export type AttendanceUpdateInput = z.infer<typeof attendanceUpdateSchema>;
+
+export const markAllWorkedSchema = z.object({
+  eventId: z.string().uuid(),
+});
+
+export type MarkAllWorkedInput = z.infer<typeof markAllWorkedSchema>;
+
+export const eventLifecycleSchema = z.object({
+  eventId: z.string().uuid(),
+});
+
+export type EventLifecycleInput = z.infer<typeof eventLifecycleSchema>;
+
 // ─── Roster / staff / roles / qualifications / CSV ───────────────────────
 
 export const preferredContactSchema = z.enum([
