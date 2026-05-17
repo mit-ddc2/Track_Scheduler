@@ -1,21 +1,21 @@
-import { createServerClient } from "@/lib/db/supabase-server";
+import type { User } from "@supabase/supabase-js";
 
-export type SessionProfile = {
-  id: string;
-  role: "owner" | "viewer";
-} | null;
+import { createClient } from "@/lib/db/supabase-server";
+import type { Profile } from "@/lib/db/types";
 
 export type Session = {
-  user: { id: string; email: string | null };
-  profile: SessionProfile;
+  user: User;
+  profile: Profile | null;
 };
 
 /**
- * Returns the current authenticated session, or `null` if no user is signed in.
- * Profile lookup is stubbed until the `profiles` table lands in Phase 1.
+ * Returns the current authenticated session plus the matching profile row,
+ * or `null` if no user is signed in. Profile may be `null` for a brief
+ * window right after first sign-in if the `on_auth_user_created` trigger
+ * hasn't fired yet — callers should treat that as "not yet authorized".
  */
 export async function getSession(): Promise<Session | null> {
-  const supabase = await createServerClient();
+  const supabase = await createClient();
 
   const {
     data: { user },
@@ -23,11 +23,16 @@ export async function getSession(): Promise<Session | null> {
 
   if (!user) return null;
 
-  // TODO(phase-1): join with profiles table to load role + display info.
-  const profile: SessionProfile = null;
+  const { data: profile } = await supabase
+    .from("profiles")
+    .select(
+      "id, display_name, email, is_owner, is_active, phone_for_alerts, created_at, updated_at",
+    )
+    .eq("id", user.id)
+    .maybeSingle();
 
   return {
-    user: { id: user.id, email: user.email ?? null },
-    profile,
+    user,
+    profile: (profile as Profile | null) ?? null,
   };
 }
