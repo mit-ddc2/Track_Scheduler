@@ -72,18 +72,19 @@ After clicking: 302 → `/dashboard`, auth cookie set on the domain.
 
 ## Test + validation coverage
 
-- **Unit tests**: 280+ passing across ~30 test files (count varies as final PRs land — see latest `pnpm test --run`)
+- **Unit tests**: **309 passing across 35 test files** (final count after all autonomous merges)
 - **Playwright E2E**: 2 scenarios (happy path + replacements). Skips without `SUPABASE_SECRET_KEY`; runs end-to-end against the dev server when secrets are present. Mock SMS lets the full SMS path complete.
-- **Security audit**: full OWASP review done — `SECURITY_AUDIT.md` at repo root. All HIGH and selected MEDIUM findings fixed on the `security-hardening` PR.
-- **Performance + accessibility audit**: `PERFORMANCE_AND_A11Y_AUDIT.md` at repo root. HIGH findings fixed on `perf-a11y-hardening` PR.
-- **Smoke test**: `bash scripts/smoke-test.sh` — 8 checks against the live URL. Currently passing 8/8.
+- **Security audit**: full OWASP review done — `SECURITY_AUDIT.md` at repo root. All 4 HIGH and 2 of 6 MEDIUM findings **fixed** and merged.
+- **Performance + accessibility audit**: `PERFORMANCE_AND_A11Y_AUDIT.md` at repo root. All 3 HIGH perf + all 4 HIGH a11y findings **fixed** and merged (plus the MEDIUM dashboard parallelization + new index migration).
+- **Smoke test**: `bash scripts/smoke-test.sh` — 8 checks against the live URL. **Currently passing 8/8.**
+- **Routes built**: 35 (full route list visible in `pnpm build` output)
 
 ## Repository state
 
-- **15+ PRs merged**, all CI-gated, all reviewer-audited
+- **26 PRs merged**, all CI-gated, all reviewer-audited (no `--admin` bypasses)
 - Main branch is clean: lint + typecheck + test + build all green
-- Zero stale local branches, zero stale worktrees (after final cleanup)
-- 4 audit docs + DEMO_SCRIPT.md + OPERATIONS.md + PROJECT_STATUS.md + HANDOFF.md (this file) + README.md committed
+- Zero stale local branches, zero stale worktrees
+- Audit + ops docs: `SECURITY_AUDIT.md`, `PERFORMANCE_AND_A11Y_AUDIT.md`, `OPERATIONS.md`, `DEMO_SCRIPT.md`, `PROJECT_STATUS.md`, `HANDOFF.md` (this file), `README.md`
 
 ## How to demo end-of-day (8 min)
 
