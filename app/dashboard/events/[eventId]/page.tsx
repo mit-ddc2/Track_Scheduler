@@ -5,9 +5,11 @@ import { formatInTimeZone } from "date-fns-tz";
 import { Card } from "@/components/ui/Card";
 import { Chip } from "@/components/ui/Chip";
 import { CoverageBar } from "@/components/events/CoverageBar";
+import { EventInvitesLive } from "@/components/events/EventInvitesLive";
 import { EventStatusChip } from "@/components/events/EventStatusChip";
 import { MiniStat } from "@/components/events/MiniStat";
 import { requireOwner } from "@/lib/auth/require-owner";
+import { createClient } from "@/lib/db/supabase-server";
 import { computeCoverage } from "@/lib/events/coverage";
 import {
   daysOut,
@@ -15,7 +17,11 @@ import {
   formatTimeRange,
   shortCode,
 } from "@/lib/events/format";
-import { getEvent, listEventRequirements } from "@/lib/events/queries";
+import {
+  getEvent,
+  getEventCoverageRows,
+  listEventRequirements,
+} from "@/lib/events/queries";
 
 type PageProps = {
   params: Promise<{ eventId: string }>;
@@ -27,8 +33,8 @@ type Tab = { id: string; label: string; disabled?: boolean };
 const TABS: ReadonlyArray<Tab> = [
   { id: "overview", label: "Overview" },
   { id: "requirements", label: "Requirements" },
-  { id: "roster", label: "Roster", disabled: true },
-  { id: "messages", label: "Messages", disabled: true },
+  { id: "roster", label: "Roster" },
+  { id: "messages", label: "Messages" },
 ];
 
 export default async function EventDetailPage({ params, searchParams }: PageProps) {
@@ -40,15 +46,60 @@ export default async function EventDetailPage({ params, searchParams }: PageProp
   const event = await getEvent(eventId);
   if (!event) notFound();
 
-  const requirements = await listEventRequirements(eventId);
-  // Phase 3: no invites/assignments yet — coverage is all zeros against the
-  // configured headcount.
-  const coverage = computeCoverage([], [], event.required_headcount);
+  const supabase = await createClient();
+  const [requirements, coverageRows, rosterRows, messagesRows] = await Promise.all([
+    listEventRequirements(eventId),
+    getEventCoverageRows(eventId),
+    tab === "roster"
+      ? supabase
+          .from("event_invites")
+          .select(
+            "id, status, response_note, responded_at, selected_channels, staff_members(id, display_name)",
+          )
+          .eq("event_id", eventId)
+          .order("updated_at", { ascending: false })
+      : Promise.resolve({ data: [] as unknown[], error: null }),
+    tab === "messages"
+      ? supabase
+          .from("message_outbox")
+          .select(
+            "id, channel, to_value, status, sent_at, error_code, error_message, created_at",
+          )
+          .order("created_at", { ascending: false })
+          .limit(50)
+      : Promise.resolve({ data: [] as unknown[], error: null }),
+  ]);
+  const coverage = computeCoverage(
+    coverageRows.invites,
+    coverageRows.assignments,
+    event.required_headcount,
+  );
+  const hasInvites = coverageRows.invites.length > 0;
+  type RosterRow = {
+    id: string;
+    status: string;
+    response_note: string | null;
+    selected_channels: string[] | null;
+    staff_members: { id: string; display_name: string } | null;
+  };
+  type MessageRow = {
+    id: string;
+    channel: string;
+    to_value: string;
+    status: string;
+    sent_at: string | null;
+    error_code: string | null;
+    error_message: string | null;
+    created_at: string;
+  };
+  const rosterList = (rosterRows.data ?? []) as RosterRow[];
+  const messageList = (messagesRows.data ?? []) as MessageRow[];
   const days = daysOut(event.starts_at, new Date(), event.timezone);
   const tz = event.timezone || "America/Toronto";
 
   return (
     <div style={{ position: "relative", paddingBottom: 96 }}>
+      <EventInvitesLive eventId={event.id} />
       <div
         style={{
           padding: "20px 16px 0",
@@ -133,19 +184,21 @@ export default async function EventDetailPage({ params, searchParams }: PageProp
               tone={coverage.short > 0 ? "bad" : "idle"}
             />
           </div>
-          <p
-            style={{
-              marginTop: 14,
-              padding: 10,
-              border: "1px dashed var(--line)",
-              borderRadius: 4,
-              color: "var(--text-3)",
-              fontSize: 12,
-              textAlign: "center",
-            }}
-          >
-            No invitations sent yet — Phase 5 wires the invite + roster flow.
-          </p>
+          {!hasInvites && (
+            <p
+              style={{
+                marginTop: 14,
+                padding: 10,
+                border: "1px dashed var(--line)",
+                borderRadius: 4,
+                color: "var(--text-3)",
+                fontSize: 12,
+                textAlign: "center",
+              }}
+            >
+              No invitations sent yet — use SEND INVITES below to get started.
+            </p>
+          )}
         </Card>
 
         {/* Meta chips */}
@@ -356,6 +409,147 @@ export default async function EventDetailPage({ params, searchParams }: PageProp
                         </div>
                       )}
                     </div>
+                  </div>
+                </div>
+              ))
+            )}
+          </Card>
+        )}
+
+        {tab === "roster" && (
+          <Card
+            id="event-tabpanel-roster"
+            role="tabpanel"
+            aria-labelledby="event-tab-roster"
+          >
+            {rosterList.length === 0 ? (
+              <div
+                style={{
+                  padding: 24,
+                  textAlign: "center",
+                  color: "var(--text-3)",
+                  fontSize: 12,
+                }}
+              >
+                No invitations sent yet for this event.
+              </div>
+            ) : (
+              rosterList.map((r, idx) => (
+                <div key={r.id}>
+                  {idx > 0 && <hr className="cs-divider" />}
+                  <div
+                    style={{
+                      padding: 14,
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 12,
+                    }}
+                  >
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontWeight: 600, fontSize: 13 }}>
+                        {r.staff_members?.display_name ?? "(unknown)"}
+                      </div>
+                      {r.response_note && (
+                        <div
+                          style={{
+                            marginTop: 4,
+                            fontSize: 12,
+                            color: "var(--text-3)",
+                          }}
+                        >
+                          “{r.response_note}”
+                        </div>
+                      )}
+                    </div>
+                    <Chip
+                      tone={
+                        r.status === "accepted"
+                          ? "ok"
+                          : r.status === "declined" ||
+                              r.status === "cancelled_by_member" ||
+                              r.status === "cancelled_by_manager"
+                            ? "bad"
+                            : r.status === "invited"
+                              ? "warn"
+                              : "default"
+                      }
+                    >
+                      {r.status.replace(/_/g, " ").toUpperCase()}
+                    </Chip>
+                  </div>
+                </div>
+              ))
+            )}
+          </Card>
+        )}
+
+        {tab === "messages" && (
+          <Card
+            id="event-tabpanel-messages"
+            role="tabpanel"
+            aria-labelledby="event-tab-messages"
+          >
+            {messageList.length === 0 ? (
+              <div
+                style={{
+                  padding: 24,
+                  textAlign: "center",
+                  color: "var(--text-3)",
+                  fontSize: 12,
+                }}
+              >
+                No outbound messages yet. After SEND INVITES the cron job
+                drains the outbox every minute.
+              </div>
+            ) : (
+              messageList.map((m, idx) => (
+                <div key={m.id}>
+                  {idx > 0 && <hr className="cs-divider" />}
+                  <div
+                    style={{
+                      padding: 14,
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 12,
+                    }}
+                  >
+                    <Chip>{m.channel.toUpperCase()}</Chip>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div
+                        className="mono"
+                        style={{
+                          fontSize: 12,
+                          color: "var(--text)",
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                          whiteSpace: "nowrap",
+                        }}
+                      >
+                        {m.to_value}
+                      </div>
+                      {m.error_message && (
+                        <div
+                          style={{
+                            marginTop: 4,
+                            fontSize: 11,
+                            color: "var(--bad)",
+                          }}
+                        >
+                          {m.error_code ?? "ERROR"}: {m.error_message}
+                        </div>
+                      )}
+                    </div>
+                    <Chip
+                      tone={
+                        m.status === "sent"
+                          ? "ok"
+                          : m.status === "failed" || m.status === "cancelled"
+                            ? "bad"
+                            : "warn"
+                      }
+                    >
+                      {m.status.toUpperCase()}
+                    </Chip>
                   </div>
                 </div>
               ))

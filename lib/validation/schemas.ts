@@ -353,6 +353,47 @@ export type QualificationUpdateInput = z.infer<
   typeof qualificationUpdateSchema
 >;
 
+// ─── Invitations & RSVP ──────────────────────────────────────────────────
+
+export const inviteChannelSchema = z.enum(["sms", "email"]);
+export type InviteChannel = z.infer<typeof inviteChannelSchema>;
+
+/**
+ * Sent by the dashboard invite-flow action when the manager finishes the
+ * three-step wizard. The orchestrator (lib/messaging/create-campaign.ts)
+ * consumes this schema directly.
+ */
+export const sendInvitationCampaignSchema = z.object({
+  eventId: z.string().uuid({ message: "Invalid event id" }),
+  staffMemberIds: z
+    .array(z.string().uuid())
+    .min(1, { message: "Select at least one responder" })
+    .max(500, { message: "Too many recipients in one campaign" }),
+  channels: z
+    .array(inviteChannelSchema)
+    .min(1, { message: "Select at least one channel" }),
+  smsTemplate: z.string().max(1600).optional().nullable(),
+  emailSubject: z.string().max(200).optional().nullable(),
+  emailTemplate: z.string().max(8000).optional().nullable(),
+});
+export type SendInvitationCampaignInput = z.infer<
+  typeof sendInvitationCampaignSchema
+>;
+
+export const RSVP_ACTIONS = ["accept", "decline", "cancel", "update_note"] as const;
+export type RsvpActionKind = (typeof RSVP_ACTIONS)[number];
+
+/** Public RSVP submission — never trust the client. */
+export const rsvpSubmitSchema = z.object({
+  token: z
+    .string()
+    .min(8, { message: "Invalid RSVP link" })
+    .max(200, { message: "Invalid RSVP link" }),
+  action: z.enum(RSVP_ACTIONS),
+  note: z.string().trim().max(500).optional().nullable(),
+});
+export type RsvpSubmitInput = z.infer<typeof rsvpSubmitSchema>;
+
 // ─── Provider webhook payloads ───────────────────────────────────────────
 
 /**

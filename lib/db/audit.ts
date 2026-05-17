@@ -5,7 +5,11 @@ if (typeof window !== "undefined") {
 
 import { createAdminClient } from "./supabase-admin";
 
-export type AuditActorType = "owner" | "system" | "member";
+export type AuditActorType =
+  | "owner"
+  | "system"
+  | "member"
+  | "responder_token";
 
 export type AuditEntry = {
   action: string;
