@@ -116,7 +116,6 @@ export function RosterListView({ rows, roleNames }: RosterListViewProps) {
             background: "var(--surface)",
             color: "var(--text)",
             font: "500 14px/1.2 inherit",
-            outline: "none",
             minHeight: 44,
           }}
         />

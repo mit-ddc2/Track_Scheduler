@@ -30,6 +30,13 @@ type Query = {
 export class MockSupabase {
   tables: Record<string, Row[]> = {};
   inserts: Array<{ table: string; row: Row }> = [];
+  /**
+   * Operation log — one entry per terminator (.maybeSingle/.single/.then/
+   * .commit). Useful for tests that want to assert "this code path issues
+   * exactly N queries against table X".
+   */
+  ops: Array<{ table: string; kind: "select" | "insert" | "upsert" | "update" }> =
+    [];
 
   // Useful for some tests: pre-seed rows.
   seed(table: string, rows: Row[]) {
@@ -141,12 +148,14 @@ class MockSelect {
   }
 
   async maybeSingle() {
+    this.db.ops.push({ table: this.q.table, kind: "select" });
     const rows = this.resolveRows();
     if (rows.length === 0) return { data: null, error: null };
     return { data: rows[0], error: null };
   }
 
   async single() {
+    this.db.ops.push({ table: this.q.table, kind: "select" });
     const rows = this.resolveRows();
     if (rows.length === 0)
       return { data: null, error: { code: "PGRST116", message: "no rows" } };
@@ -155,6 +164,7 @@ class MockSelect {
 
   // Treat the select itself as awaitable for "list" queries.
   then<TResult>(onFulfilled: (v: { data: Row[]; error: null }) => TResult) {
+    this.db.ops.push({ table: this.q.table, kind: "select" });
     return Promise.resolve({ data: this.resolveRows(), error: null }).then(
       onFulfilled,
     );
@@ -175,6 +185,7 @@ class MockInsert {
   }
 
   private async commit(): Promise<{ data: Row[]; error: null | { code: string; message: string } }> {
+    this.db.ops.push({ table: this.table, kind: "insert" });
     const list = this.db.tables[this.table] ?? (this.db.tables[this.table] = []);
     const toInsert = Array.isArray(this.rowOrRows)
       ? this.rowOrRows
@@ -230,6 +241,7 @@ class MockUpsert {
     data: Row[];
     error: null | { code: string; message: string };
   }> {
+    this.db.ops.push({ table: this.table, kind: "upsert" });
     const list = this.db.tables[this.table] ?? (this.db.tables[this.table] = []);
     const toInsert = Array.isArray(this.rowOrRows)
       ? this.rowOrRows
@@ -308,6 +320,7 @@ class MockUpdate {
     data: Row[];
     error: null | { code: string; message: string };
   }> {
+    this.db.ops.push({ table: this.table, kind: "update" });
     const list = this.db.tables[this.table] ?? (this.db.tables[this.table] = []);
     const matched = list.filter((r) => this.filters.every((f) => f(r)));
     for (const r of matched) {
