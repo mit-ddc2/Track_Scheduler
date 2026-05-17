@@ -81,11 +81,17 @@ export async function listAllEvents(opts?: {
     : now;
   const upper = new Date(now.getTime() + 365 * 24 * 3600 * 1000);
 
+  // An event qualifies if its window touches the range, not just if it
+  // starts inside it — otherwise a still-running event whose start is
+  // before `lower` is hidden. Match rows where starts_at >= lower OR
+  // ends_at >= lower (the latter catches in-progress events).
+  const lowerIso = lower.toISOString();
+  const upperIso = upper.toISOString();
   let query = supabase
     .from("events")
     .select("*")
-    .gte("starts_at", lower.toISOString())
-    .lte("starts_at", upper.toISOString())
+    .or(`starts_at.gte.${lowerIso},ends_at.gte.${lowerIso}`)
+    .lte("starts_at", upperIso)
     .order("starts_at", { ascending: true });
 
   if (opts?.status && opts.status !== "all" && STATUSES.has(opts.status as EventStatus)) {

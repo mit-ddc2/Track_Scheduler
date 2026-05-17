@@ -7,10 +7,14 @@ import { Chip } from "@/components/ui/Chip";
 import { CoverageBar } from "@/components/events/CoverageBar";
 import { EventStatusChip } from "@/components/events/EventStatusChip";
 import { MiniStat } from "@/components/events/MiniStat";
-import { shortCode } from "@/components/events/EventCardStrip";
 import { requireOwner } from "@/lib/auth/require-owner";
 import { computeCoverage } from "@/lib/events/coverage";
-import { daysOut, formatEventDate, formatTimeRange } from "@/lib/events/format";
+import {
+  daysOut,
+  formatEventDate,
+  formatTimeRange,
+  shortCode,
+} from "@/lib/events/format";
 import { getEvent, listEventRequirements } from "@/lib/events/queries";
 
 type PageProps = {
@@ -165,6 +169,8 @@ export default async function EventDetailPage({ params, searchParams }: PageProp
 
         {/* Tabs */}
         <div
+          role="tablist"
+          aria-label="Event detail sections"
           style={{
             display: "flex",
             gap: 0,
@@ -180,8 +186,13 @@ export default async function EventDetailPage({ params, searchParams }: PageProp
             return (
               <Link
                 key={t.id}
+                id={`event-tab-${t.id}`}
                 href={href}
-                aria-disabled={t.disabled}
+                role="tab"
+                aria-selected={active}
+                aria-disabled={t.disabled || undefined}
+                aria-controls={active ? `event-tabpanel-${t.id}` : undefined}
+                tabIndex={active ? 0 : -1}
                 style={{
                   flex: 1,
                   padding: "12px 0",
@@ -208,7 +219,12 @@ export default async function EventDetailPage({ params, searchParams }: PageProp
         </div>
 
         {tab === "overview" && (
-          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          <div
+            id="event-tabpanel-overview"
+            role="tabpanel"
+            aria-labelledby="event-tab-overview"
+            style={{ display: "flex", flexDirection: "column", gap: 12 }}
+          >
             <Card style={{ padding: 16 }}>
               <span className="cs-label">Description</span>
               <p
@@ -276,7 +292,11 @@ export default async function EventDetailPage({ params, searchParams }: PageProp
         )}
 
         {tab === "requirements" && (
-          <Card>
+          <Card
+            id="event-tabpanel-requirements"
+            role="tabpanel"
+            aria-labelledby="event-tab-requirements"
+          >
             {requirements.length === 0 ? (
               <div
                 style={{
@@ -344,37 +364,59 @@ export default async function EventDetailPage({ params, searchParams }: PageProp
         )}
       </div>
 
-      {/* Sticky bottom action bar (mobile-first). Phase 5 wires both buttons:
-          /invite ships the invite flow, /attendance ships post-event check-in. */}
-      <div
-        style={{
-          position: "fixed",
-          bottom: 64,
-          left: 0,
-          right: 0,
-          padding: "12px 16px",
-          background: "linear-gradient(to top, var(--bg) 60%, transparent)",
-          display: "flex",
-          gap: 8,
-          maxWidth: 720,
-          margin: "0 auto",
-        }}
-      >
-        <Link
-          href={`/dashboard/events/${event.id}/invite`}
-          className="cs-btn cs-btn--primary cs-btn--lg"
-          style={{ flex: 1, textDecoration: "none" }}
-        >
-          SEND INVITES
-        </Link>
-        <Link
-          href={`/dashboard/events/${event.id}/attendance`}
-          className="cs-btn cs-btn--lg"
-          style={{ textDecoration: "none" }}
-        >
-          ATTENDANCE
-        </Link>
+      {/*
+        Sticky bottom action bar. Phase 5 wires both buttons:
+        /invite ships the invite flow, /attendance ships post-event check-in.
+
+        Centering note: a `position: fixed` element with `left:0 right:0`
+        cannot be centred by `margin: 0 auto`. We use a fixed full-width
+        outer wrapper as a flex container (so `justify-content: center`
+        actually centres the inner bar) and constrain max-width on the
+        inner bar instead. On desktop (>=768px) the bottom nav rail is
+        gone, so bottom offset drops from 64 to 0.
+      */}
+      <div className="cs-event-actionbar-wrap">
+        <div className="cs-event-actionbar">
+          <Link
+            href={`/dashboard/events/${event.id}/invite`}
+            className="cs-btn cs-btn--primary cs-btn--lg"
+            style={{ flex: 1, textDecoration: "none" }}
+          >
+            SEND INVITES
+          </Link>
+          <Link
+            href={`/dashboard/events/${event.id}/attendance`}
+            className="cs-btn cs-btn--lg"
+            style={{ textDecoration: "none" }}
+          >
+            ATTENDANCE
+          </Link>
+        </div>
       </div>
+      <style>{`
+        .cs-event-actionbar-wrap {
+          position: fixed;
+          left: 0;
+          right: 0;
+          bottom: 64px;
+          display: flex;
+          justify-content: center;
+          pointer-events: none;
+          padding: 0 16px;
+          background: linear-gradient(to top, var(--bg) 60%, transparent);
+        }
+        .cs-event-actionbar {
+          pointer-events: auto;
+          width: 100%;
+          max-width: 720px;
+          display: flex;
+          gap: 8px;
+          padding: 12px 0;
+        }
+        @media (min-width: 768px) {
+          .cs-event-actionbar-wrap { bottom: 0; }
+        }
+      `}</style>
     </div>
   );
 }

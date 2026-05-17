@@ -4,7 +4,6 @@
  * server/browser locale.
  */
 
-import { differenceInCalendarDays } from "date-fns";
 import { formatInTimeZone } from "date-fns-tz";
 
 const DEFAULT_TZ = "America/Toronto";
@@ -66,6 +65,12 @@ export function formatTimeRange(
 /**
  * Calendar days between `now` and event start, evaluated in the event tz.
  * Negative numbers mean the event already started/ended.
+ *
+ * We compare on the calendar date string (yyyy-MM-dd) in `tz` rather than
+ * normalising the moments to "midnight in tz" — date-fns-tz reports the
+ * offset of the supplied instant, not of midnight that day, which produces
+ * off-by-one diffs across DST transitions (spring-forward/fall-back) and
+ * around the year boundary.
  */
 export function daysOut(
   start: Date | string,
@@ -73,11 +78,20 @@ export function daysOut(
   tz: string = DEFAULT_TZ,
 ): number {
   const s = toDate(start);
-  // Normalize both anchors to the start-of-day in `tz` so DST doesn't
-  // give off-by-one results for events near midnight.
-  const startDay = new Date(formatInTimeZone(s, tz, "yyyy-MM-dd'T'00:00:00xxx"));
-  const nowDay = new Date(formatInTimeZone(now, tz, "yyyy-MM-dd'T'00:00:00xxx"));
-  return differenceInCalendarDays(startDay, nowDay);
+  // UTC midnight for the calendar date as seen in `tz`. Subtracting two
+  // such moments and dividing by ms-per-day gives the calendar-day delta
+  // safely across DST + year boundaries.
+  const startMs = Date.UTC(
+    Number(formatInTimeZone(s, tz, "yyyy")),
+    Number(formatInTimeZone(s, tz, "MM")) - 1,
+    Number(formatInTimeZone(s, tz, "dd")),
+  );
+  const nowMs = Date.UTC(
+    Number(formatInTimeZone(now, tz, "yyyy")),
+    Number(formatInTimeZone(now, tz, "MM")) - 1,
+    Number(formatInTimeZone(now, tz, "dd")),
+  );
+  return Math.round((startMs - nowMs) / 86_400_000);
 }
 
 /** Short month + week-of-year eyebrow ("May · Week 21"). */
@@ -97,4 +111,13 @@ export function toDateTimeLocal(
 ): string {
   const d = toDate(input);
   return formatInTimeZone(d, tz, "yyyy-MM-dd'T'HH:mm");
+}
+
+/**
+ * Short, human-scannable code derived from an event id. Used in lists and
+ * detail headers so an event can be referenced verbally / over text.
+ * Example: `7f3d…` → `EV-7F3D`.
+ */
+export function shortCode(id: string): string {
+  return `EV-${id.slice(0, 4).toUpperCase()}`;
 }

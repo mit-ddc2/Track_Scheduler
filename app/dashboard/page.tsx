@@ -17,17 +17,14 @@ export default async function DashboardHome() {
   const events = await listUpcomingEvents();
 
   const now = new Date();
-  const spotlight =
-    events.find(
-      (e) =>
-        e.status === "underfilled" ||
-        e.confirmed + e.pending < e.required_headcount,
-    ) ?? null;
+  // Spotlight requires invite data; activates once Phase 5 sends real invites.
+  // Until then `confirmed`/`pending` are placeholder zeros (see
+  // lib/events/queries.ts), so we gate strictly on `status === 'underfilled'`
+  // which can only be reached by the Phase 5 invite flow.
+  const spotlight = events.find((e) => e.status === "underfilled") ?? null;
 
   const underfilledCount = events.filter(
-    (e) =>
-      e.status === "underfilled" ||
-      e.confirmed + e.pending < e.required_headcount,
+    (e) => e.status === "underfilled",
   ).length;
   const pendingCount = events.reduce((acc, e) => acc + e.pending, 0);
 
@@ -146,8 +143,10 @@ export default async function DashboardHome() {
         </section>
 
         {/* Right pane — laptop only. Activity feed lands in Phase 4. */}
+        {/* Visibility is controlled by the `<style>` block below; the project
+            does not use Tailwind utility classes so `hidden md:block` would be
+            a no-op. */}
         <aside
-          className="hidden md:block"
           style={{
             minWidth: 0,
             display: "none",

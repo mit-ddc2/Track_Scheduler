@@ -45,8 +45,16 @@ vi.mock("@/lib/db/audit", () => ({
   }),
 }));
 
+type RpcCall = { name: string; args: unknown };
+const rpcCalls: RpcCall[] = [];
+
 vi.mock("@/lib/db/supabase-server", () => ({
   createClient: vi.fn(async () => ({
+    rpc: async (name: string, args: unknown) => {
+      trace.push(`rpc:${name}`);
+      rpcCalls.push({ name, args });
+      return { data: null, error: null };
+    },
     from: (table: string) => {
       trace.push(`from:${table}`);
       const builder = {
@@ -97,6 +105,7 @@ vi.mock("@/lib/db/supabase-server", () => ({
 afterEach(() => {
   vi.clearAllMocks();
   trace.length = 0;
+  rpcCalls.length = 0;
 });
 
 describe("createManualEvent", () => {
@@ -201,5 +210,30 @@ describe("setEventRequirements", () => {
       { label: "", required_count: 1 },
     ]);
     expect(result.error).toMatch(/label/i);
+  });
+
+  it("calls the set_event_requirements_tx RPC instead of separate delete/insert", async () => {
+    const { setEventRequirements } = await import("./actions");
+    const result = await setEventRequirements("ev-1", [
+      { label: "Marshals", required_count: 4, notes: undefined },
+      { label: "First aid", required_count: 2, notes: "needs cert" },
+    ]);
+    expect(result.ok).toBe(true);
+    // No raw delete/insert against event_requirements — only the RPC.
+    expect(trace).not.toContain("delete:event_requirements");
+    expect(trace).not.toContain("insert:event_requirements");
+    expect(trace).toContain("rpc:set_event_requirements_tx");
+    expect(rpcCalls).toHaveLength(1);
+    expect(rpcCalls[0]?.name).toBe("set_event_requirements_tx");
+    const args = rpcCalls[0]?.args as {
+      p_event_id: string;
+      p_requirements: Array<Record<string, unknown>>;
+    };
+    expect(args.p_event_id).toBe("ev-1");
+    expect(args.p_requirements).toHaveLength(2);
+    expect(args.p_requirements[0]).toMatchObject({
+      label: "Marshals",
+      required_count: 4,
+    });
   });
 });

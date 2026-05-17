@@ -3,10 +3,10 @@ import { formatInTimeZone } from "date-fns-tz";
 
 import { Card } from "@/components/ui/Card";
 import { Chip } from "@/components/ui/Chip";
-import { EventCardStrip, shortCode } from "@/components/events/EventCardStrip";
+import { EventCardStrip } from "@/components/events/EventCardStrip";
 import { EventStatusChip } from "@/components/events/EventStatusChip";
 import { listAllEvents } from "@/lib/events/queries";
-import { formatTimeRange } from "@/lib/events/format";
+import { formatTimeRange, shortCode } from "@/lib/events/format";
 import type { EventStatus } from "@/lib/db/types";
 
 const FILTER_CHIPS: Array<{ key: string; label: string; status?: EventStatus }> = [

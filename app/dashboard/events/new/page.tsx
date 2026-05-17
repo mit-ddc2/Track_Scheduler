@@ -26,7 +26,7 @@ function defaultValues(): EventFormValues {
     ends_at: fmt(end),
     timezone: "America/Toronto",
     location: "",
-    required_headcount: 0,
+    required_headcount: 1,
     overbooking_policy: "allow_all",
     manager_notes: "",
   };

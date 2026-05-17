@@ -3,7 +3,7 @@ import { formatInTimeZone } from "date-fns-tz";
 
 import { Chip } from "@/components/ui/Chip";
 import type { EventRow } from "@/lib/db/types";
-import { formatTimeRange } from "@/lib/events/format";
+import { formatTimeRange, shortCode } from "@/lib/events/format";
 
 import { CoverageBar } from "./CoverageBar";
 import { EventStatusChip } from "./EventStatusChip";
@@ -23,11 +23,6 @@ export type EventStripData = Pick<
   pending: number;
   code?: string | null;
 };
-
-/** Generate a short code from the event id for visual scanning. */
-function shortCode(id: string): string {
-  return `EV-${id.slice(0, 4).toUpperCase()}`;
-}
 
 export type EventCardStripProps = {
   event: EventStripData;
@@ -159,4 +154,7 @@ export function EventCardStrip({ event }: EventCardStripProps) {
   );
 }
 
-export { shortCode };
+// `shortCode` has moved to `@/lib/events/format`. Re-exported here for
+// backward compatibility with the dashboard and event detail pages until
+// callers migrate to the new import path.
+export { shortCode } from "@/lib/events/format";

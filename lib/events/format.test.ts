@@ -5,6 +5,7 @@ import {
   formatEventDate,
   formatTimeRange,
   monthWeekEyebrow,
+  shortCode,
   toDateTimeLocal,
 } from "./format";
 
@@ -69,6 +70,31 @@ describe("daysOut", () => {
     const now = new Date("2026-05-17T12:00:00-04:00");
     expect(daysOut("2026-05-24T12:00:00-04:00", now, TZ)).toBe(7);
   });
+
+  it("stays correct across the spring-forward DST boundary", () => {
+    // 2026 spring-forward in Toronto: 02:00 EST on Sun Mar 8 → 03:00 EDT.
+    // Use offset-anchored inputs so the test does not depend on which side
+    // of the discontinuity the parsed UTC instant falls on.
+    const now = new Date("2026-03-07T09:00:00-05:00"); // Sat 09:00 EST
+    const start = "2026-03-08T09:00:00-04:00"; // Sun 09:00 EDT
+    expect(daysOut(start, now, TZ)).toBe(1);
+  });
+
+  it("stays correct across the fall-back DST boundary", () => {
+    // 2026 fall-back in Toronto: 02:00 EDT on Sun Nov 1 → 01:00 EST.
+    // 25 wall-clock hours separate 09:00 Oct 31 and 09:00 Nov 1.
+    const now = new Date("2026-10-31T09:00:00-04:00"); // Sat 09:00 EDT
+    const start = "2026-11-01T09:00:00-05:00"; // Sun 09:00 EST
+    expect(daysOut(start, now, TZ)).toBe(1);
+  });
+
+  it("crosses the year boundary cleanly", () => {
+    // Dec 31 23:30 local → Jan 1 00:30 local is still "1 day out" by
+    // calendar date, even though the wall-clock delta is 1 hour.
+    const now = new Date("2026-12-31T23:30:00-05:00");
+    const start = "2027-01-01T00:30:00-05:00";
+    expect(daysOut(start, now, TZ)).toBe(1);
+  });
 });
 
 describe("monthWeekEyebrow", () => {
@@ -83,5 +109,15 @@ describe("toDateTimeLocal", () => {
     expect(toDateTimeLocal("2026-05-23T13:00:00Z", TZ)).toBe(
       "2026-05-23T09:00",
     );
+  });
+});
+
+describe("shortCode", () => {
+  it("derives an uppercase EV-XXXX code from the first four id chars", () => {
+    expect(shortCode("7f3d1abc-1111-2222-3333-444455556666")).toBe("EV-7F3D");
+  });
+
+  it("handles ids shorter than 4 characters", () => {
+    expect(shortCode("ab")).toBe("EV-AB");
   });
 });

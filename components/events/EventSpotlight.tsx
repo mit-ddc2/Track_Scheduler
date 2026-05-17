@@ -2,11 +2,10 @@ import Link from "next/link";
 import { formatInTimeZone } from "date-fns-tz";
 
 import type { EventRow } from "@/lib/db/types";
-import { formatTimeRange } from "@/lib/events/format";
+import { formatTimeRange, shortCode } from "@/lib/events/format";
 
 import { CoverageBar } from "./CoverageBar";
 import { EventStatusChip } from "./EventStatusChip";
-import { shortCode } from "./EventCardStrip";
 
 export type EventSpotlightData = Pick<
   EventRow,

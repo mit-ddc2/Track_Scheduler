@@ -282,8 +282,12 @@ export async function cancelEvent(
 }
 
 /**
- * Replace the entire requirement set for an event. Uses delete+reinsert
- * because requirement rows have no stable client-side identity yet.
+ * Replace the entire requirement set for an event.
+ *
+ * Calls the `set_event_requirements_tx` Postgres function so the delete +
+ * insert run inside a single transaction. The previous implementation issued
+ * two separate Supabase calls, which meant a failed insert could leave the
+ * event with zero requirement rows (see 0004_set_event_requirements_rpc.sql).
  */
 export async function setEventRequirements(
   eventId: string,
@@ -312,31 +316,20 @@ export async function setEventRequirements(
     return { error: "Event not found" };
   }
 
-  // Delete-then-insert; both are RLS-checked.
-  const { error: delError } = await supabase
-    .from("event_requirements")
-    .delete()
-    .eq("event_id", eventId);
-  if (delError) {
-    return { error: delError.message };
-  }
+  const payload = requirements.map((r) => ({
+    label: r.label.trim(),
+    required_count: r.required_count,
+    role_id: r.role_id ?? null,
+    qualification_id: r.qualification_id ?? null,
+    notes: r.notes ?? null,
+  }));
 
-  if (requirements.length > 0) {
-    const { error: insError } = await supabase
-      .from("event_requirements")
-      .insert(
-        requirements.map((r) => ({
-          event_id: eventId,
-          label: r.label.trim(),
-          required_count: r.required_count,
-          role_id: r.role_id ?? null,
-          qualification_id: r.qualification_id ?? null,
-          notes: r.notes ?? null,
-        })),
-      );
-    if (insError) {
-      return { error: insError.message };
-    }
+  const { error: rpcError } = await supabase.rpc("set_event_requirements_tx", {
+    p_event_id: eventId,
+    p_requirements: payload,
+  });
+  if (rpcError) {
+    return { error: rpcError.message };
   }
 
   await writeAudit({
