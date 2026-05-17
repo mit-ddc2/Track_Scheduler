@@ -1,10 +1,15 @@
 import Link from "next/link";
 
+import { ActivityFeed } from "@/components/dashboard/ActivityFeed";
 import { Card } from "@/components/ui/Card";
 import { Chip } from "@/components/ui/Chip";
 import { EventCardStrip } from "@/components/events/EventCardStrip";
 import { EventSpotlight } from "@/components/events/EventSpotlight";
 import { requireOwner } from "@/lib/auth/require-owner";
+import {
+  formatDashboardSubtitle,
+  getDashboardCounts,
+} from "@/lib/dashboard/counts";
 import { createClient as createServerClient } from "@/lib/db/supabase-server";
 import { listUpcomingEvents } from "@/lib/events/queries";
 import { monthWeekEyebrow } from "@/lib/events/format";
@@ -16,9 +21,10 @@ export const dynamic = "force-dynamic";
 /**
  * Dashboard home / events overview.
  *
- * Phase 3 reads real `events` rows but reports placeholder coverage counts
- * (confirmed/pending = 0). Phase 5 will swap the zero-counts for an aggregate
- * over `event_invites` + `event_assignments`.
+ * The header subtitle ("3 events · 1 underfilled · 8 pending") is computed
+ * live from `events` + `event_invites` via `getDashboardCounts`. The right
+ * pane on desktop hosts the realtime `ActivityFeed`; on mobile it renders
+ * below the events list.
  *
  * Phase 6 surfaces urgent `event.urgent_underfilled` notifications in the
  * header: when there's any unread urgent-underfill notification we prefer
@@ -27,7 +33,10 @@ export const dynamic = "force-dynamic";
  */
 export default async function DashboardHome() {
   const session = await requireOwner();
-  const events = await listUpcomingEvents();
+  const [events, counts] = await Promise.all([
+    listUpcomingEvents(),
+    getDashboardCounts(),
+  ]);
 
   // Pull unread urgent_underfilled notifications so we can prefer them as
   // the spotlight + show a header badge. Cheap query — capped at 20 rows.
@@ -57,10 +66,7 @@ export default async function DashboardHome() {
   const spotlight =
     urgentEvent ?? events.find((e) => e.status === "underfilled") ?? null;
 
-  const underfilledCount = events.filter(
-    (e) => e.status === "underfilled",
-  ).length;
-  const pendingCount = events.reduce((acc, e) => acc + e.pending, 0);
+  const subtitle = formatDashboardSubtitle(counts);
 
   return (
     <div
@@ -85,10 +91,7 @@ export default async function DashboardHome() {
             flexWrap: "wrap",
           }}
         >
-          <span>
-            {events.length} event{events.length === 1 ? "" : "s"} ·{" "}
-            {underfilledCount} underfilled · {pendingCount} pending
-          </span>
+          <span>{subtitle}</span>
           {urgentCount > 0 && (
             <Chip tone="bad">
               {urgentCount} URGENT · NEEDS REPLACEMENTS
@@ -185,61 +188,34 @@ export default async function DashboardHome() {
               ))}
             </Card>
           )}
+
+          {/* Mobile-only: activity feed lives below the events list. The
+              desktop sidebar above hides this on md+ via the <style> block. */}
+          <div
+            className="dashboard-feed-mobile"
+            style={{ marginTop: 24 }}
+          >
+            <ActivityFeed variant="section" />
+          </div>
         </section>
 
-        {/* Right pane — laptop only. Activity feed lands in Phase 4. */}
-        {/* Visibility is controlled by the `<style>` block below; the project
-            does not use Tailwind utility classes so `hidden md:block` would be
-            a no-op. */}
+        {/* Desktop sidebar — visible only on md+ via the <style> block. */}
         <aside
+          className="dashboard-feed-sidebar"
           style={{
             minWidth: 0,
             display: "none",
           }}
         >
-          <Card style={{ padding: 16 }}>
-            <span className="cs-eyebrow">Today · 0 events</span>
-            <h2 className="cs-h3" style={{ marginTop: 10 }}>
-              Activity feed
-            </h2>
-            <p
-              style={{
-                marginTop: 8,
-                color: "var(--text-2)",
-                fontSize: 12,
-                lineHeight: 1.5,
-              }}
-            >
-              Live message + RSVP events arrive here in Phase 4.
-            </p>
-            <hr className="cs-divider" style={{ margin: "12px 0" }} />
-            <span className="cs-eyebrow">Calendar sync</span>
-            <p
-              style={{
-                marginTop: 8,
-                color: "var(--text-2)",
-                fontSize: 12,
-                lineHeight: 1.5,
-              }}
-            >
-              Manual entry only — Google + ICS sync ships in v1.1.
-            </p>
-            <button
-              type="button"
-              className="cs-btn cs-btn--sm"
-              style={{ marginTop: 12, opacity: 0.5, cursor: "not-allowed" }}
-              disabled
-            >
-              SYNC NOW
-            </button>
-          </Card>
+          <ActivityFeed variant="sidebar" />
         </aside>
       </div>
 
       <style>{`
         @media (min-width: 768px) {
           .dashboard-grid { grid-template-columns: minmax(0, 2fr) minmax(280px, 1fr) !important; }
-          .dashboard-grid aside { display: block !important; }
+          .dashboard-feed-sidebar { display: block !important; }
+          .dashboard-feed-mobile { display: none !important; }
         }
       `}</style>
     </div>

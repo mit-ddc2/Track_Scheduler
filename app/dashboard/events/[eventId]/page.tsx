@@ -8,9 +8,12 @@ import { CoverageBar } from "@/components/events/CoverageBar";
 import { EventInvitesLive } from "@/components/events/EventInvitesLive";
 import { EventStatusChip } from "@/components/events/EventStatusChip";
 import { MiniStat } from "@/components/events/MiniStat";
+import { UnderfilledNudge } from "@/components/events/UnderfilledNudge";
+import { isUnderfilledNudgeDismissed } from "@/components/events/underfilled-nudge-cookie";
 import { requireOwner } from "@/lib/auth/require-owner";
 import { createClient } from "@/lib/db/supabase-server";
 import { computeCoverage } from "@/lib/events/coverage";
+import { fetchRoleGaps } from "@/lib/events/role-gaps";
 import {
   daysOut,
   formatEventDate,
@@ -75,6 +78,15 @@ export default async function EventDetailPage({ params, searchParams }: PageProp
     event.required_headcount,
   );
   const hasInvites = coverageRows.invites.length > 0;
+  // The "needs attention" nudge only renders when:
+  //   1. the event is actually short on confirmed seats,
+  //   2. invites have already gone out (otherwise SEND INVITES is the call),
+  //   3. the manager hasn't dismissed it in this browser session.
+  const showNudge = coverage.short > 0 && hasInvites;
+  const [nudgeDismissed, roleGaps] = await Promise.all([
+    isUnderfilledNudgeDismissed(eventId),
+    showNudge ? fetchRoleGaps(eventId) : Promise.resolve([]),
+  ]);
   type RosterRow = {
     id: string;
     status: string;
@@ -200,6 +212,14 @@ export default async function EventDetailPage({ params, searchParams }: PageProp
             </p>
           )}
         </Card>
+
+        {showNudge && !nudgeDismissed && (
+          <UnderfilledNudge
+            eventId={event.id}
+            shortCount={coverage.short}
+            roleGaps={roleGaps}
+          />
+        )}
 
         {/* Meta chips */}
         <div
