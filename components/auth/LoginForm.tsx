@@ -9,7 +9,11 @@ type FormState =
   | { kind: "idle" }
   | { kind: "sending" }
   | { kind: "sent"; email: string }
-  | { kind: "error"; message: string };
+  | { kind: "error"; message: string }
+  | { kind: "not_allowed" };
+
+const NOT_AUTHORIZED_COPY =
+  "This email isn't authorized to use Calabogie Safety. Contact the site admin.";
 
 export function LoginForm() {
   const [email, setEmail] = React.useState("");
@@ -24,6 +28,43 @@ export function LoginForm() {
     }
     setState({ kind: "sending" });
     try {
+      // v2: pre-check the email against the server-side allowlist before
+      // touching Supabase Auth. Stops us from emailing a magic link to
+      // random addresses and gives the user immediate feedback when their
+      // email isn't on the list.
+      let allowed = false;
+      try {
+        const res = await fetch("/api/auth/is-allowed", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email: trimmed }),
+        });
+        if (res.status === 429) {
+          setState({
+            kind: "error",
+            message:
+              "Too many sign-in attempts. Wait a minute and try again.",
+          });
+          return;
+        }
+        const body = (await res.json().catch(() => ({}))) as {
+          allowed?: boolean;
+        };
+        allowed = Boolean(body.allowed);
+      } catch {
+        // Network failure — fail closed; we'd rather refuse a legitimate
+        // user (who can retry) than blast a magic link on a guess.
+        setState({
+          kind: "error",
+          message: "Couldn't verify access right now. Try again in a moment.",
+        });
+        return;
+      }
+      if (!allowed) {
+        setState({ kind: "not_allowed" });
+        return;
+      }
+
       const supabase = createClient();
       const { error } = await supabase.auth.signInWithOtp({
         email: trimmed,
@@ -42,6 +83,43 @@ export function LoginForm() {
         message: err instanceof Error ? err.message : "Unexpected error.",
       });
     }
+  }
+
+  if (state.kind === "not_allowed") {
+    return (
+      <div
+        role="alert"
+        style={{
+          display: "flex",
+          flexDirection: "column",
+          gap: 12,
+          padding: 16,
+          borderRadius: 4,
+          border: "1px solid color-mix(in srgb, var(--bad) 30%, transparent)",
+          background: "color-mix(in srgb, var(--bad) 8%, transparent)",
+        }}
+      >
+        <span className="cs-chip cs-chip--bad">Access denied</span>
+        <p
+          style={{
+            margin: 0,
+            fontSize: 14,
+            color: "var(--text)",
+            lineHeight: 1.45,
+          }}
+        >
+          {NOT_AUTHORIZED_COPY}
+        </p>
+        <button
+          type="button"
+          className="cs-btn cs-btn--ghost cs-btn--sm"
+          onClick={() => setState({ kind: "idle" })}
+          style={{ alignSelf: "flex-start" }}
+        >
+          Try a different email
+        </button>
+      </div>
+    );
   }
 
   if (state.kind === "sent") {

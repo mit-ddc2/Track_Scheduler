@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { notFound } from "next/navigation";
 import { formatInTimeZone } from "date-fns-tz";
 
 import { Btn } from "@/components/ui/Btn";
@@ -34,7 +35,12 @@ const RANGE_FILTERS: Array<{ key: NonNullable<AuditQueryFilters["range"]>; label
 ];
 
 type PageProps = {
-  searchParams: Promise<{ action?: string; range?: string; offset?: string }>;
+  searchParams: Promise<{
+    action?: string;
+    range?: string;
+    offset?: string;
+    advanced?: string;
+  }>;
 };
 
 function shortId(id: string | null | undefined): string {
@@ -80,6 +86,11 @@ function jsonPretty(value: unknown): string {
 export default async function AuditLogPage({ searchParams }: PageProps) {
   await requireOwner();
   const params = await searchParams;
+  // v2: this surface is kept functional but hidden from the simplified
+  // settings nav. It only renders when ?advanced=1 is present in the URL.
+  if (params.advanced !== "1") {
+    notFound();
+  }
   const actionPrefix = params.action ?? "all";
   const rangeRaw = (params.range ?? "30d") as AuditQueryFilters["range"];
   const offset = Math.max(0, Number.parseInt(params.offset ?? "0", 10) || 0);

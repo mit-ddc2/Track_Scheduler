@@ -1,3 +1,5 @@
+import { notFound } from "next/navigation";
+
 import { requireOwner } from "@/lib/auth/require-owner";
 import {
   EVENT_TYPES,
@@ -12,8 +14,19 @@ import { PreferencesForm } from "./PreferencesForm";
 
 export const dynamic = "force-dynamic";
 
-export default async function NotificationsSettingsPage() {
+type PageProps = {
+  searchParams?: Promise<{ advanced?: string }>;
+};
+
+export default async function NotificationsSettingsPage({
+  searchParams,
+}: PageProps = {}) {
   const session = await requireOwner();
+  // v2: hidden from simplified settings nav; ?advanced=1 unlocks it.
+  const params = searchParams ? await searchParams : {};
+  if (params.advanced !== "1") {
+    notFound();
+  }
   const existing = await getNotificationPreferences(session.profile.id);
 
   const byEventType = new Map<string, NotificationPreference>();

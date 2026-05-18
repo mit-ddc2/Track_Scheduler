@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { notFound } from "next/navigation";
 import { formatInTimeZone } from "date-fns-tz";
 
 import { Btn } from "@/components/ui/Btn";
@@ -71,12 +72,16 @@ function fmtAbs(iso: string | null): string {
 }
 
 type PageProps = {
-  searchParams: Promise<{ tab?: string; filter?: string }>;
+  searchParams: Promise<{ tab?: string; filter?: string; advanced?: string }>;
 };
 
 export default async function ConsentPage({ searchParams }: PageProps) {
   await requireOwner();
   const params = await searchParams;
+  // v2: hidden from simplified settings nav; ?advanced=1 unlocks it.
+  if (params.advanced !== "1") {
+    notFound();
+  }
   const tab: Tab = params.tab === "opt-outs" ? "opt-outs" : "per-staff";
   const filterKey = params.filter ?? "all";
 

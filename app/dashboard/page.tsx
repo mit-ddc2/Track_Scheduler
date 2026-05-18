@@ -1,6 +1,6 @@
 import Link from "next/link";
 
-import { ActivityFeed } from "@/components/dashboard/ActivityFeed";
+import { RecentResponses } from "@/components/dashboard/RecentResponses";
 import { Card } from "@/components/ui/Card";
 import { Chip } from "@/components/ui/Chip";
 import { EventCardStrip } from "@/components/events/EventCardStrip";
@@ -192,13 +192,15 @@ export default async function DashboardHome() {
             </Card>
           )}
 
-          {/* Mobile-only: activity feed lives below the events list. The
-              desktop sidebar above hides this on md+ via the <style> block. */}
+          {/* Mobile-only: recent responses lives below the events list. The
+              desktop sidebar above hides this on md+ via the <style> block.
+              v2: trimmed from the full activity feed to a focused "Last 5
+              RSVPs" card; other event types still surface via the bell. */}
           <div
             className="dashboard-feed-mobile"
             style={{ marginTop: 24 }}
           >
-            <ActivityFeed variant="section" />
+            <RecentResponses variant="section" />
           </div>
         </section>
 
@@ -210,7 +212,7 @@ export default async function DashboardHome() {
             display: "none",
           }}
         >
-          <ActivityFeed variant="sidebar" />
+          <RecentResponses variant="sidebar" />
         </aside>
       </div>
 
