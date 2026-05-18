@@ -110,7 +110,7 @@ export async function setAttendanceStatus(
   if (!parsed.success) {
     return { error: parsed.error.issues[0]?.message ?? "Invalid attendance update" };
   }
-  const { eventId, staffMemberId, status } = parsed.data;
+  const { eventId, staffMemberId, status, day_date: requestedDay } = parsed.data;
 
   const supabase = await createClient();
 
@@ -120,14 +120,19 @@ export async function setAttendanceStatus(
     return handleEditableError(err);
   }
 
-  // Hydrate the assignment so we can carry the assignment_id and the event's
-  // scheduled window into the attendance row on first write.
-  const { data: assignment, error: aError } = await supabase
+  // v2: pull the assignment for this specific day when the caller scoped it,
+  // so the FK + scheduled window come from the right per-day row. Falls back
+  // to the legacy "first assignment for this event+staff" lookup when no
+  // day is supplied (v1 single-day path).
+  let assignmentQuery = supabase
     .from("event_assignments")
     .select("id, day_date")
     .eq("event_id", eventId)
-    .eq("staff_member_id", staffMemberId)
-    .maybeSingle();
+    .eq("staff_member_id", staffMemberId);
+  if (requestedDay) {
+    assignmentQuery = assignmentQuery.eq("day_date", requestedDay);
+  }
+  const { data: assignment, error: aError } = await assignmentQuery.maybeSingle();
   if (aError) return { error: aError.message };
 
   const { data: event } = await supabase
@@ -137,10 +142,10 @@ export async function setAttendanceStatus(
     .maybeSingle();
 
   const approvedAt = status === "worked" ? new Date().toISOString() : null;
-  // v2: attendance is per-day. Until the attendance UI lifts to a per-day
-  // matrix (Wave B2), default to either the assignment's day_date or the
-  // event's start date so the v1 single-day cycle button keeps working.
+  // v2: per-day. Prefer the explicit request, then the assignment's own
+  // day_date, then the event's start date.
   const dayDate =
+    requestedDay ??
     (assignment as { day_date?: string } | null)?.day_date ??
     (event?.starts_at ? event.starts_at.slice(0, 10) : null);
   if (!dayDate) return { error: "Could not resolve event day for attendance" };
@@ -166,8 +171,13 @@ export async function setAttendanceStatus(
     action: "attendance.set_status",
     entity_type: "attendance",
     entity_id: eventId,
-    summary: `Set attendance to ${status}`,
-    after: { event_id: eventId, staff_member_id: staffMemberId, status },
+    summary: `Set attendance to ${status}${dayDate ? ` (${dayDate})` : ""}`,
+    after: {
+      event_id: eventId,
+      staff_member_id: staffMemberId,
+      status,
+      day_date: dayDate,
+    },
     actorType: "owner",
     actorId: session.profile.id,
   });
@@ -191,7 +201,8 @@ export async function updateAttendanceDetails(
   if (!parsed.success) {
     return { error: parsed.error.issues[0]?.message ?? "Invalid attendance update" };
   }
-  const { eventId, staffMemberId, ...patch } = parsed.data;
+  const { eventId, staffMemberId, day_date: requestedDay, ...patch } =
+    parsed.data;
 
   const supabase = await createClient();
 
@@ -201,30 +212,33 @@ export async function updateAttendanceDetails(
     return handleEditableError(err);
   }
 
-  // We need an assignment_id + scheduled window only when there is no
-  // existing attendance row yet (so the upsert defaults are sensible).
-  const { data: existing } = await supabase
+  // v2: existing attendance + assignment lookups are scoped to the
+  // requested day_date when one is provided so multi-day matrices don't
+  // overwrite each others' rows.
+  let existingQuery = supabase
     .from("attendance_records")
-    .select("id")
+    .select("id, day_date")
     .eq("event_id", eventId)
-    .eq("staff_member_id", staffMemberId)
-    .maybeSingle();
+    .eq("staff_member_id", staffMemberId);
+  if (requestedDay) existingQuery = existingQuery.eq("day_date", requestedDay);
+  const { data: existing } = await existingQuery.maybeSingle();
 
   let assignmentId: string | null = null;
   let scheduledStart: string | null = null;
   let scheduledEnd: string | null = null;
   let assignmentDayDate: string | null = null;
   let eventStartDayDate: string | null = null;
-  // Always need a day_date for the v2 schema. Pull either the existing
-  // attendance row's day, the assignment's day, or fall back to event start.
   const existingDay = (existing as { day_date?: string } | null)?.day_date ?? null;
   if (!existing || !existingDay) {
-    const { data: assignment } = await supabase
+    let assignmentQuery = supabase
       .from("event_assignments")
       .select("id, day_date")
       .eq("event_id", eventId)
-      .eq("staff_member_id", staffMemberId)
-      .maybeSingle();
+      .eq("staff_member_id", staffMemberId);
+    if (requestedDay) {
+      assignmentQuery = assignmentQuery.eq("day_date", requestedDay);
+    }
+    const { data: assignment } = await assignmentQuery.maybeSingle();
     assignmentId = assignment?.id ?? null;
     assignmentDayDate =
       (assignment as { day_date?: string } | null)?.day_date ?? null;
@@ -239,7 +253,8 @@ export async function updateAttendanceDetails(
       ? event.starts_at.slice(0, 10)
       : null;
   }
-  const dayDate = existingDay ?? assignmentDayDate ?? eventStartDayDate;
+  const dayDate =
+    requestedDay ?? existingDay ?? assignmentDayDate ?? eventStartDayDate;
   if (!dayDate) return { error: "Could not resolve event day for attendance" };
 
   const payload: AttendanceRecordInsert = {

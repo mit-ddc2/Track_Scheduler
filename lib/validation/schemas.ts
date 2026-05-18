@@ -128,11 +128,26 @@ export type AttendanceStatusEnum = (typeof ATTENDANCE_STATUSES)[number];
 
 export const attendanceStatusSchema = z.enum(ATTENDANCE_STATUSES);
 
+/**
+ * v2 (Wave B2): YYYY-MM-DD `day_date` used by the per-day attendance matrix.
+ * Optional on the action input so legacy single-day callers keep working —
+ * when omitted, the server defaults to the event's start day or the
+ * assignment's own day.
+ */
+const attendanceDayDate = z
+  .string()
+  .regex(/^\d{4}-\d{2}-\d{2}$/u, "Must be a YYYY-MM-DD date")
+  .refine((s) => !Number.isNaN(new Date(`${s}T00:00:00Z`).getTime()), {
+    message: "Must be a valid calendar date",
+  })
+  .optional();
+
 /** Sets only the status — used by the cycle button on the attendance grid. */
 export const attendanceStatusUpdateSchema = z.object({
   eventId: z.string().uuid(),
   staffMemberId: z.string().uuid(),
   status: attendanceStatusSchema,
+  day_date: attendanceDayDate,
 });
 
 export type AttendanceStatusUpdateInput = z.infer<
@@ -147,6 +162,7 @@ export type AttendanceStatusUpdateInput = z.infer<
 export const attendanceUpdateSchema = z.object({
   eventId: z.string().uuid(),
   staffMemberId: z.string().uuid(),
+  day_date: attendanceDayDate,
   actual_start: z
     .string()
     .min(1)

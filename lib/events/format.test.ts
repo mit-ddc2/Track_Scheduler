@@ -4,6 +4,7 @@ import {
   daysOut,
   formatEventDate,
   formatTimeRange,
+  isMultiDayEvent,
   monthWeekEyebrow,
   shortCode,
   toDateTimeLocal,
@@ -119,5 +120,32 @@ describe("shortCode", () => {
 
   it("handles ids shorter than 4 characters", () => {
     expect(shortCode("ab")).toBe("EV-AB");
+  });
+});
+
+describe("isMultiDayEvent", () => {
+  it("returns false for a same-day event in tz", () => {
+    expect(
+      isMultiDayEvent(
+        "2026-05-23T13:00:00Z", // 09:00 EDT
+        "2026-05-23T21:00:00Z", // 17:00 EDT
+        TZ,
+      ),
+    ).toBe(false);
+  });
+
+  it("returns true for a multi-day event in tz", () => {
+    expect(
+      isMultiDayEvent("2026-05-23T13:00:00Z", "2026-05-24T21:00:00Z", TZ),
+    ).toBe(true);
+  });
+
+  it("uses the event timezone to bucket calendar dates, not UTC", () => {
+    // Midnight UTC on May 23 is still May 22 in Toronto, so an event that
+    // straddles UTC midnight but stays inside the same Toronto calendar day
+    // counts as single-day.
+    expect(
+      isMultiDayEvent("2026-05-23T01:00:00Z", "2026-05-23T03:00:00Z", TZ),
+    ).toBe(false);
   });
 });

@@ -1,5 +1,7 @@
 "use client";
 
+import { formatInTimeZone } from "date-fns-tz";
+
 import { Card } from "@/components/ui/Card";
 
 export type InviteConfirmStepProps = {
@@ -11,7 +13,15 @@ export type InviteConfirmStepProps = {
   skippedOptOut: number;
   skippedManualOnly: number;
   skippedNoContact: number;
+  /** v2: list of YYYY-MM-DD days the campaign covers. Omit for single-day events. */
+  days?: string[];
+  timezone?: string;
 };
+
+function formatDayShort(date: string, tz: string): string {
+  const d = new Date(`${date}T12:00:00Z`);
+  return formatInTimeZone(d, tz, "EEE MMM d");
+}
 
 function pad(n: number): string {
   return String(n).padStart(2, "0");
@@ -26,6 +36,8 @@ export function InviteConfirmStep({
   skippedOptOut,
   skippedManualOnly,
   skippedNoContact,
+  days,
+  timezone = "America/Toronto",
 }: InviteConfirmStepProps) {
   const totalSkipped = skippedOptOut + skippedManualOnly + skippedNoContact;
   return (
@@ -66,6 +78,44 @@ export function InviteConfirmStep({
             sub={`${smsCount} SMS · ${emailCount} email`}
           />
         </div>
+
+        {days && days.length > 0 && (
+          <div
+            style={{
+              marginTop: 14,
+              padding: "12px 0",
+              borderBottom: "1px solid var(--line)",
+            }}
+          >
+            <div className="cs-label" style={{ marginBottom: 6 }}>
+              Days · {days.length}
+            </div>
+            <div
+              style={{
+                display: "flex",
+                flexWrap: "wrap",
+                gap: 6,
+              }}
+            >
+              {days.map((d) => (
+                <span
+                  key={d}
+                  className="mono"
+                  style={{
+                    fontSize: 11,
+                    padding: "3px 8px",
+                    borderRadius: 3,
+                    background: "var(--surface-2)",
+                    color: "var(--text-2)",
+                    letterSpacing: "0.04em",
+                  }}
+                >
+                  {formatDayShort(d, timezone)}
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
 
         <div
           style={{

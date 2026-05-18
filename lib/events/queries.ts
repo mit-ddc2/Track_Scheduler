@@ -174,6 +174,45 @@ export async function getEventCoverageRows(
   };
 }
 
+export type EventCoverageDayRows = {
+  invites: Array<{
+    day_date: string;
+    status: EventCoverageRows["invites"][number]["status"];
+  }>;
+  assignments: Array<{
+    day_date: string;
+    status: EventCoverageRows["assignments"][number]["status"];
+  }>;
+};
+
+/**
+ * v2: per-day coverage rows. Each row carries the `day_date` column from
+ * migration 0009 so the matrix UI can bucket by day. Used by the multi-day
+ * event detail + attendance pages.
+ */
+export async function getEventCoverageDayRows(
+  eventId: string,
+): Promise<EventCoverageDayRows> {
+  const supabase = await createClient();
+  const [{ data: invites, error: invErr }, { data: assignments, error: aErr }] =
+    await Promise.all([
+      supabase
+        .from("event_invites")
+        .select("status, day_date")
+        .eq("event_id", eventId),
+      supabase
+        .from("event_assignments")
+        .select("status, day_date")
+        .eq("event_id", eventId),
+    ]);
+  if (invErr) console.warn("[events] per-day invites query failed:", invErr.message);
+  if (aErr) console.warn("[events] per-day assignments query failed:", aErr.message);
+  return {
+    invites: (invites ?? []) as EventCoverageDayRows["invites"],
+    assignments: (assignments ?? []) as EventCoverageDayRows["assignments"],
+  };
+}
+
 export async function listEventRequirements(
   eventId: string,
 ): Promise<EventRequirement[]> {
