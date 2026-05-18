@@ -42,10 +42,11 @@ async function main() {
   const eventId = eventInsert.data!.id as string;
   console.log(`✓ Created event ${eventId} — ${eventInsert.data!.title}`);
 
+  const channels = (process.env.TEST_CHANNELS?.split(",") as ("sms" | "email")[]) ?? ["sms"];
   const result = await createInvitationCampaign({
     eventId,
     staffMemberIds: [STAFF_MEMBER_ID],
-    channels: ["sms"],
+    channels,
   });
   console.log("✓ Campaign result:", JSON.stringify(result, null, 2));
   console.log(`\nEvent: ${process.env.APP_BASE_URL}/dashboard/events/${eventId}`);
