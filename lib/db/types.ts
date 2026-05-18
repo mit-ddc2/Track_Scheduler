@@ -195,6 +195,13 @@ export type EventRow = {
   updated_at: string;
   cancelled_at: string | null;
   completed_at: string | null;
+  /**
+   * v2 (migration 0009): generated column equal to
+   * `(ends_at AT TIME ZONE timezone)::date`. Used by the per-day matrix
+   * queries so we can ask "is this event active on day D?" without
+   * recomputing the TZ shift per row.
+   */
+  ends_on_date: string;
 };
 
 export type EventInsert = {
@@ -428,6 +435,42 @@ export type RsvpTokenInsert = {
   used_at?: string | null;
 };
 
+// ─── Event invites (per-day) ─────────────────────────────────────────────
+
+export type EventInviteRow = {
+  id: string;
+  event_id: string;
+  campaign_id: string | null;
+  staff_member_id: string;
+  status: InviteStatus;
+  selected_channels: ContactChannel[];
+  available_start_at: string | null;
+  available_end_at: string | null;
+  response_note: string | null;
+  responded_at: string | null;
+  created_at: string;
+  updated_at: string;
+  /** v2 (migration 0009): ISO date (YYYY-MM-DD) of the event day this invite covers. */
+  day_date: string;
+};
+
+export type EventInviteInsert = {
+  id?: string;
+  event_id: string;
+  campaign_id?: string | null;
+  staff_member_id: string;
+  status?: InviteStatus;
+  selected_channels: ContactChannel[];
+  available_start_at?: string | null;
+  available_end_at?: string | null;
+  response_note?: string | null;
+  responded_at?: string | null;
+  created_at?: string;
+  updated_at?: string;
+  /** v2 (migration 0009): required ISO date of the event day. */
+  day_date: string;
+};
+
 // ─── Event assignments + attendance (Phase 7) ────────────────────────────
 
 export type AssignmentStatus =
@@ -451,6 +494,14 @@ export type EventAssignmentRow = {
   cancellation_reason: string | null;
   created_at: string;
   updated_at: string;
+  /** v2 (migration 0009): ISO date (YYYY-MM-DD) of the event day this assignment covers. */
+  day_date: string;
+};
+
+export type EventAssignmentInsert = Partial<EventAssignmentRow> & {
+  event_id: string;
+  staff_member_id: string;
+  day_date: string;
 };
 
 export type AttendanceStatus =
@@ -479,6 +530,8 @@ export type AttendanceRecordRow = {
   approved_at: string | null;
   created_at: string;
   updated_at: string;
+  /** v2 (migration 0009): ISO date (YYYY-MM-DD) of the event day this row covers. */
+  day_date: string;
 };
 
 export type AttendanceRecordInsert = {
@@ -497,6 +550,8 @@ export type AttendanceRecordInsert = {
   notes?: string | null;
   approved_by?: string | null;
   approved_at?: string | null;
+  /** v2 (migration 0009): required ISO date of the event day. */
+  day_date: string;
 };
 
 export type AttendanceRecordUpdate = Partial<
@@ -692,12 +747,15 @@ export type Database = {
         Update: Partial<RsvpTokenRow>;
         Relationships: Rel;
       };
+      event_invites: {
+        Row: EventInviteRow;
+        Insert: EventInviteInsert;
+        Update: Partial<EventInviteRow>;
+        Relationships: Rel;
+      };
       event_assignments: {
         Row: EventAssignmentRow;
-        Insert: Partial<EventAssignmentRow> & {
-          event_id: string;
-          staff_member_id: string;
-        };
+        Insert: EventAssignmentInsert;
         Update: Partial<EventAssignmentRow>;
         Relationships: Rel;
       };

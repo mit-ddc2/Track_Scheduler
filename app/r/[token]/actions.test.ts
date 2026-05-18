@@ -52,6 +52,9 @@ function seedTokenAndInvite(opts?: {
       staff_member_id: STAFF_ID,
       status: opts?.status ?? "invited",
       selected_channels: ["sms"],
+      // v2 (migration 0009): every invite is per-day now. Default to the
+      // event's start date so the existing single-day tests still pass.
+      day_date: "2026-06-15",
     },
   ]);
   const { hash } = token.generateRsvpToken();
@@ -217,6 +220,156 @@ describe("submitRsvpResponse", () => {
     if (!res.ok) {
       expect(res.error).toMatch(/no longer valid/i);
     }
+  });
+});
+
+describe("submitRsvpResponse — v2 per-day", () => {
+  // Seed a multi-day event with one invite per day.
+  const MULTI_EVENT_ID = "00000000-0000-0000-0000-00000000010a";
+  const MULTI_STAFF_ID = "00000000-0000-0000-0000-00000000020a";
+  const MULTI_TOKEN_ID = "00000000-0000-0000-0000-00000000030a";
+  const MULTI_INVITE_D1 = "00000000-0000-0000-0000-00000000040a";
+  const MULTI_INVITE_D2 = "00000000-0000-0000-0000-00000000050a";
+  const MULTI_INVITE_D3 = "00000000-0000-0000-0000-00000000060a";
+
+  function seedMultiDay() {
+    db.seed("events", [
+      {
+        id: MULTI_EVENT_ID,
+        title: "Porsche Club Race",
+        starts_at: "2026-05-23T11:00:00Z",
+        ends_at: "2026-05-25T21:00:00Z",
+        timezone: "America/Toronto",
+        required_headcount: 2,
+        status: "inviting",
+      },
+    ]);
+    db.seed("staff_members", [
+      { id: MULTI_STAFF_ID, display_name: "Multi Responder", active: true },
+    ]);
+    db.seed("event_invites", [
+      {
+        id: MULTI_INVITE_D1,
+        event_id: MULTI_EVENT_ID,
+        staff_member_id: MULTI_STAFF_ID,
+        status: "invited",
+        selected_channels: ["email"],
+        day_date: "2026-05-23",
+      },
+      {
+        id: MULTI_INVITE_D2,
+        event_id: MULTI_EVENT_ID,
+        staff_member_id: MULTI_STAFF_ID,
+        status: "invited",
+        selected_channels: ["email"],
+        day_date: "2026-05-24",
+      },
+      {
+        id: MULTI_INVITE_D3,
+        event_id: MULTI_EVENT_ID,
+        staff_member_id: MULTI_STAFF_ID,
+        status: "invited",
+        selected_channels: ["email"],
+        day_date: "2026-05-25",
+      },
+    ]);
+    const fresh = token.generateRsvpToken();
+    db.seed("rsvp_tokens", [
+      {
+        id: MULTI_TOKEN_ID,
+        invite_id: MULTI_INVITE_D1,
+        token_hash: fresh.hash,
+        expires_at: new Date(Date.now() + 3600_000).toISOString(),
+        used_at: null,
+      },
+    ]);
+    return fresh.raw;
+  }
+
+  it("accepts a subset of days and writes one row per day", async () => {
+    const raw = seedMultiDay();
+    const res = await mod.submitRsvpResponseImpl({
+      token: raw,
+      action: "accept",
+      days: ["2026-05-23", "2026-05-25"],
+    });
+    expect(res.ok).toBe(true);
+
+    // Two of three invite rows flipped to accepted; D24 untouched.
+    const flipped = db.tables.event_invites.filter(
+      (i) => i.status === "accepted",
+    );
+    expect(flipped).toHaveLength(2);
+    const flippedDays = new Set(flipped.map((i) => i.day_date as string));
+    expect(flippedDays.has("2026-05-23")).toBe(true);
+    expect(flippedDays.has("2026-05-25")).toBe(true);
+
+    // Assignments: one per accepted day.
+    const assignments = db.tables.event_assignments ?? [];
+    expect(assignments).toHaveLength(2);
+    expect(assignments.every((a) => a.status === "confirmed")).toBe(true);
+    const assignedDays = new Set(assignments.map((a) => a.day_date as string));
+    expect(assignedDays.has("2026-05-23")).toBe(true);
+    expect(assignedDays.has("2026-05-25")).toBe(true);
+
+    // History: two entries (one per accepted day).
+    const history = db.tables.invite_response_history ?? [];
+    expect(history.filter((h) => h.new_status === "accepted")).toHaveLength(2);
+
+    // Token marked used.
+    expect(db.tables.rsvp_tokens[0].used_at).toBeTruthy();
+  });
+
+  it("rejects when a requested day is outside the event window", async () => {
+    const raw = seedMultiDay();
+    const res = await mod.submitRsvpResponseImpl({
+      token: raw,
+      action: "accept",
+      days: ["2026-05-23", "2026-06-01"], // June 1 is outside May 23-25
+    });
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.error).toBe("invalid_days");
+
+    // No invite flipped, no assignment written.
+    expect(
+      db.tables.event_invites.every((i) => i.status === "invited"),
+    ).toBe(true);
+    expect(db.tables.event_assignments ?? []).toHaveLength(0);
+  });
+
+  it("declines specific days while leaving others as invited", async () => {
+    const raw = seedMultiDay();
+    const res = await mod.submitRsvpResponseImpl({
+      token: raw,
+      action: "decline",
+      days: ["2026-05-24"],
+    });
+    expect(res.ok).toBe(true);
+
+    const d24 = db.tables.event_invites.find(
+      (i) => i.day_date === "2026-05-24",
+    );
+    expect(d24?.status).toBe("declined");
+    const d23 = db.tables.event_invites.find(
+      (i) => i.day_date === "2026-05-23",
+    );
+    expect(d23?.status).toBe("invited");
+  });
+
+  it("defaults to event.starts_at::date when days is omitted (v1 fallback)", async () => {
+    const raw = seedMultiDay();
+    const res = await mod.submitRsvpResponseImpl({
+      token: raw,
+      action: "accept",
+      // no days payload
+    });
+    expect(res.ok).toBe(true);
+    // Only the first day's invite is accepted.
+    const accepted = db.tables.event_invites.filter(
+      (i) => i.status === "accepted",
+    );
+    expect(accepted).toHaveLength(1);
+    expect(accepted[0].day_date).toBe("2026-05-23");
   });
 });
 

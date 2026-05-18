@@ -23,6 +23,7 @@ import type {
   InviteStatus,
   PreferredContactMethod,
 } from "@/lib/db/types";
+import { enumerateEventDays } from "@/lib/events/coverage";
 import { generateRsvpToken } from "@/lib/security/token";
 
 import { enqueueOutboxMessage } from "./outbox";
@@ -58,6 +59,12 @@ export type CreateInvitationCampaignInput = {
   appBaseUrl?: string;
   /** Optional override for token expiry (defaults to event end + 48h). */
   tokenExpiresAt?: Date | null;
+  /**
+   * v2: explicit list of YYYY-MM-DD day_dates this campaign covers. When
+   * omitted, defaults to every day in the event window (single-day events
+   * keep v1 semantics). All entries must fall inside `[starts_at, ends_at]`.
+   */
+  days?: string[];
 };
 
 export type CreateInvitationCampaignResult = {
@@ -187,6 +194,29 @@ export async function createInvitationCampaign(
     ends_at: string;
   };
 
+  // v2: resolve the days[] this campaign covers. When omitted, default to
+  // every calendar day in the event window.
+  const allDays = enumerateEventDays(event.starts_at, event.ends_at);
+  if (allDays.length === 0) {
+    throw new Error(
+      `createInvitationCampaign: event ${input.eventId} has no enumerable days`,
+    );
+  }
+  const allowedDays = new Set(allDays);
+  let days: string[];
+  if (input.days && input.days.length > 0) {
+    const bad = input.days.filter((d) => !allowedDays.has(d));
+    if (bad.length > 0) {
+      throw new Error(
+        `createInvitationCampaign: days outside the event window — ${bad.join(", ")}`,
+      );
+    }
+    // Dedupe + sort.
+    days = Array.from(new Set(input.days)).sort();
+  } else {
+    days = allDays;
+  }
+
   const staffResp = await admin
     .from("staff_members")
     .select("id, display_name, preferred_contact, active")
@@ -236,7 +266,12 @@ export async function createInvitationCampaign(
       status: "sending",
       channels: input.channels,
       campaign_type: "initial",
-      audience_snapshot: { staffMemberIds: input.staffMemberIds },
+      audience_snapshot: {
+        staffMemberIds: input.staffMemberIds,
+        // `days` reflects the resolved set actually used (defaults to the
+        // full event window when caller omits it).
+        days,
+      },
       sms_template: input.smsTemplate ?? null,
       email_subject: input.emailSubject ?? null,
       email_template: input.emailTemplate ?? null,
@@ -305,70 +340,90 @@ export async function createInvitationCampaign(
       continue;
     }
 
-    // Insert (or fetch) the event_invite row. unique(event_id, staff_member_id)
-    // handles the case where this recipient was invited previously — we
-    // re-use the existing invite + mint a fresh token rather than crash.
-    let inviteId: string | null = null;
-    const inviteInsert = await admin
-      .from("event_invites")
-      .insert({
-        event_id: input.eventId,
-        campaign_id: campaignId,
-        staff_member_id: staffId,
-        status: "invited" as InviteStatus,
-        selected_channels: reachable.map((r) => r.channel),
-      })
-      .select("id")
-      .single();
-    if (inviteInsert.error) {
-      if (inviteInsert.error.code === "23505") {
-        const refetch = await admin
-          .from("event_invites")
-          .select("id")
-          .eq("event_id", input.eventId)
-          .eq("staff_member_id", staffId)
-          .maybeSingle();
-        inviteId = (refetch.data?.id as string | undefined) ?? null;
-        if (inviteId) {
-          // Update the existing invite to the new campaign + invited status.
-          await admin
+    // v2: insert ONE event_invite row per (staff, day). The v1 single-day
+    // case still creates exactly one row because days.length === 1.
+    // unique(event_id, staff_member_id, day_date) handles re-runs — we
+    // refetch + update the existing invite rather than crash.
+    const inviteIdsByDay = new Map<string, string>();
+    let inviteInsertFailed = false;
+    for (const dayDate of days) {
+      let inviteId: string | null = null;
+      const inviteInsert = await admin
+        .from("event_invites")
+        .insert({
+          event_id: input.eventId,
+          campaign_id: campaignId,
+          staff_member_id: staffId,
+          status: "invited" as InviteStatus,
+          selected_channels: reachable.map((r) => r.channel),
+          day_date: dayDate,
+        })
+        .select("id")
+        .single();
+      if (inviteInsert.error) {
+        if (inviteInsert.error.code === "23505") {
+          const refetch = await admin
             .from("event_invites")
-            .update({
-              campaign_id: campaignId,
-              status: "invited" as InviteStatus,
-              selected_channels: reachable.map((r) => r.channel),
-              updated_at: new Date().toISOString(),
-            })
-            .eq("id", inviteId);
+            .select("id")
+            .eq("event_id", input.eventId)
+            .eq("staff_member_id", staffId)
+            .eq("day_date", dayDate)
+            .maybeSingle();
+          inviteId = (refetch.data?.id as string | undefined) ?? null;
+          if (inviteId) {
+            await admin
+              .from("event_invites")
+              .update({
+                campaign_id: campaignId,
+                status: "invited" as InviteStatus,
+                selected_channels: reachable.map((r) => r.channel),
+                updated_at: new Date().toISOString(),
+              })
+              .eq("id", inviteId);
+          }
+        } else {
+          console.warn(
+            `[create-campaign] invite insert failed for staff ${staffId} day ${dayDate}: ${inviteInsert.error.message}`,
+          );
+          inviteInsertFailed = true;
+          break;
         }
       } else {
-        // Surface unexpected DB errors — but keep going for the rest.
-        console.warn(
-          `[create-campaign] invite insert failed for staff ${staffId}: ${inviteInsert.error.message}`,
-        );
-        skippedNoContact += 1;
-        continue;
+        inviteId = inviteInsert.data?.id as string;
       }
-    } else {
-      inviteId = inviteInsert.data?.id as string;
+      if (!inviteId) {
+        inviteInsertFailed = true;
+        break;
+      }
+      inviteIdsByDay.set(dayDate, inviteId);
     }
-    if (!inviteId) {
+
+    if (inviteInsertFailed || inviteIdsByDay.size === 0) {
       skippedNoContact += 1;
       continue;
     }
 
-    // Mint an RSVP token (raw value goes into the message URL, hash to DB).
+    // v2: ONE rsvp_token per (staff, event) campaign — bound to the FIRST
+    // day's invite row. The RSVP handler will join through to the full
+    // (event_id, staff_member_id) set of invites to list every day. The
+    // token covers all days the recipient was invited for.
+    const firstDay = days[0];
+    const primaryInviteId = inviteIdsByDay.get(firstDay)!;
+
     const { raw: rawToken, hash: tokenHash } = generateRsvpToken();
     const tokenInsert = await admin.from("rsvp_tokens").insert({
-      invite_id: inviteId,
+      invite_id: primaryInviteId,
       token_hash: tokenHash,
       expires_at: tokenExpiresAt.toISOString(),
     });
     if (tokenInsert.error) {
       console.warn(
-        `[create-campaign] token insert failed for invite ${inviteId}: ${tokenInsert.error.message}`,
+        `[create-campaign] token insert failed for invite ${primaryInviteId}: ${tokenInsert.error.message}`,
       );
     }
+    // For downstream code paths that still refer to a single inviteId
+    // (outbox row attribution, idempotency keys) we use the primary invite.
+    const inviteId = primaryInviteId;
 
     const rsvpUrl = `${appBaseUrl.replace(/\/+$/, "")}/r/${rawToken}`;
     const recipient = {
@@ -380,7 +435,7 @@ export async function createInvitationCampaign(
 
     for (const { channel, contact } of reachable) {
       if (channel === "sms") {
-        const body = renderInviteSms({ event, recipient, rsvpUrl });
+        const body = renderInviteSms({ event, recipient, rsvpUrl, days });
         const idem = buildIdempotencyKey({
           eventId: input.eventId,
           staffId,
@@ -401,7 +456,7 @@ export async function createInvitationCampaign(
         if (res.deduped) deduped += 1;
         else smsEnqueued += 1;
       } else {
-        const rendered = renderInviteEmail({ event, recipient, rsvpUrl });
+        const rendered = renderInviteEmail({ event, recipient, rsvpUrl, days });
         const idem = buildIdempotencyKey({
           eventId: input.eventId,
           staffId,

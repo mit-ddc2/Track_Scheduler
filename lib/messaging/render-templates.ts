@@ -28,6 +28,14 @@ export type RenderInviteInput = {
   event: TemplateEvent;
   recipient: TemplateRecipient;
   rsvpUrl: string;
+  /**
+   * v2: optional list of YYYY-MM-DD strings for the specific days this
+   * recipient is being invited for. When provided the templates list the
+   * days explicitly (helpful for multi-day events where the responder may
+   * only be wanted for a subset). When omitted the templates fall back to
+   * the event's full window — preserving v1 behaviour.
+   */
+  days?: string[];
 };
 
 const DEFAULT_TZ = "America/Toronto";
@@ -68,6 +76,80 @@ export function formatEventWhenLong(event: TemplateEvent): string {
   return `${date} ${startTime}–${endTime}`;
 }
 
+const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
+const MONTHS = [
+  "Jan",
+  "Feb",
+  "Mar",
+  "Apr",
+  "May",
+  "Jun",
+  "Jul",
+  "Aug",
+  "Sep",
+  "Oct",
+  "Nov",
+  "Dec",
+] as const;
+
+/**
+ * Format one YYYY-MM-DD string as "EEE MMM d" without ever crossing a
+ * timezone boundary. The `day_date` column is a plain DATE so we want the
+ * literal calendar day — converting through `new Date('YYYY-MM-DDTxx:xx')`
+ * and then back would shift the day in any TZ with a non-zero UTC offset.
+ */
+function formatIsoDayLabel(iso: string): string {
+  const [y, m, d] = iso.split("-").map((v) => Number.parseInt(v, 10));
+  if (!y || !m || !d) return iso;
+  // Build a Date in UTC so day-of-week math is deterministic regardless of
+  // the runtime locale.
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  return `${WEEKDAYS[dt.getUTCDay()]} ${MONTHS[m - 1]} ${d}`;
+}
+
+/**
+ * Format a list of YYYY-MM-DD day strings as a short, human-friendly run
+ * for SMS bodies. Example output:
+ *   ["2026-05-23"]                          → "Sat May 23"
+ *   ["2026-05-23","2026-05-24"]            → "Sat May 23, Sun May 24"
+ *   ["2026-05-23","2026-05-24","2026-05-25"] → "Sat May 23–Mon May 25"
+ *
+ * Returns empty string when the list is empty.
+ */
+export function formatDaysShort(
+  days: string[] | undefined,
+  // _tz is accepted for API symmetry but intentionally unused — `day_date`
+  // is a plain DATE so we format the literal calendar day. The eslint
+  // underscore prefix convention suppresses the unused-arg warning.
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  _tz: string = "America/Toronto",
+): string {
+  if (!days || days.length === 0) return "";
+  const sorted = days.slice().sort();
+  if (sorted.length === 1) return formatIsoDayLabel(sorted[0]);
+
+  // Detect consecutive runs by comparing UTC midnights.
+  const utcMillis = sorted.map((s) => {
+    const [y, m, d] = s.split("-").map((v) => Number.parseInt(v, 10));
+    return Date.UTC(y, m - 1, d);
+  });
+  const consecutive = utcMillis.every(
+    (t, i) => i === 0 || t - utcMillis[i - 1] === 86_400_000,
+  );
+  if (consecutive && sorted.length > 2) {
+    return `${formatIsoDayLabel(sorted[0])}–${formatIsoDayLabel(sorted[sorted.length - 1])}`;
+  }
+  return sorted.map(formatIsoDayLabel).join(", ");
+}
+
+/** Same as {@link formatDaysShort} but uses the event's timezone. */
+export function formatDaysShortForEvent(
+  event: TemplateEvent,
+  days: string[] | undefined,
+): string {
+  return formatDaysShort(days, tzOf(event));
+}
+
 // ─── Invite SMS ───────────────────────────────────────────────────
 /**
  * Spec §8.8 example:
@@ -79,10 +161,22 @@ export function formatEventWhenLong(event: TemplateEvent): string {
 export function renderInviteSms({
   event,
   rsvpUrl,
+  days,
 }: RenderInviteInput): string {
-  const when = formatEventWhenShort(event);
+  // v2: prefer an explicit day-list when present (multi-day RSVP). Falls
+  // back to the v1 single-line "when" for single-day events or callers
+  // that haven't been migrated yet.
+  const when =
+    days && days.length > 0
+      ? formatDaysShortForEvent(event, days)
+      : formatEventWhenShort(event);
+  const dayWord = days && days.length > 1 ? "days" : "day";
+  const phrase =
+    days && days.length > 0
+      ? `Rescue crew request for ${event.title} (${days.length} ${dayWord}: ${when}).`
+      : `Rescue crew request for ${event.title}, ${when}.`;
   return (
-    `Calabogie Safety: Rescue crew request for ${event.title}, ${when}.` +
+    `Calabogie Safety: ${phrase}` +
     ` RSVP: ${rsvpUrl} Reply STOP to opt out.`
   );
 }
@@ -107,9 +201,16 @@ export function renderInviteEmail({
   event,
   recipient,
   rsvpUrl,
+  days,
 }: RenderInviteInput): RenderedEmail {
   const when = formatEventWhenLong(event);
-  const subject = `Rescue Team Request: ${event.title} — ${when}`;
+  const hasDays = !!days && days.length > 0;
+  const daysList = hasDays ? formatDaysShortForEvent(event, days) : "";
+  const dayCount = hasDays ? days!.length : 0;
+  const dayCountWord = dayCount === 1 ? "day" : "days";
+  const subject = hasDays
+    ? `Rescue Team Request: ${event.title} — ${dayCount} ${dayCountWord} (${daysList})`
+    : `Rescue Team Request: ${event.title} — ${when}`;
   const greetingName = recipient.display_name;
   const location = event.location ?? "Calabogie Motorsports Park";
   const roleLine = recipient.role_label
@@ -121,8 +222,11 @@ export function renderInviteEmail({
     "",
     `Robert is putting together the rescue crew for ${event.title}.`,
     `When: ${when} (${tzOf(event)})`,
-    `Where: ${location}`,
   ];
+  if (hasDays) {
+    textLines.push(`Days requested: ${daysList} (${dayCount} ${dayCountWord})`);
+  }
+  textLines.push(`Where: ${location}`);
   if (roleLine) textLines.push(roleLine.trimEnd());
   textLines.push(
     "",
@@ -135,12 +239,15 @@ export function renderInviteEmail({
   );
   const text = textLines.join("\n");
 
+  const daysLine = hasDays
+    ? `<br><strong>Days requested:</strong> ${htmlEscape(daysList)} (${dayCount} ${dayCountWord})`
+    : "";
   const html = `<!doctype html>
 <html lang="en"><body style="font-family:system-ui,Arial,sans-serif;line-height:1.5;color:#0d0f1a;">
 <p>Hi ${htmlEscape(greetingName)},</p>
 <p>Robert is putting together the rescue crew for <strong>${htmlEscape(event.title)}</strong>.</p>
 <p>
-<strong>When:</strong> ${htmlEscape(when)} (${htmlEscape(tzOf(event))})<br>
+<strong>When:</strong> ${htmlEscape(when)} (${htmlEscape(tzOf(event))})${daysLine}<br>
 <strong>Where:</strong> ${htmlEscape(location)}${
     recipient.role_label
       ? `<br><strong>Role:</strong> ${htmlEscape(recipient.role_label)}`

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   estimateSmsSegments,
+  formatDaysShort,
   renderCampaignChangeNoticeEmail,
   renderCampaignChangeNoticeSms,
   renderInviteEmail,
@@ -91,6 +92,73 @@ describe("renderInviteEmail", () => {
     // Pure-render test: no other-staff data ever flows in.
     expect(out.text).not.toContain("Other Staff");
     expect(out.html).not.toContain("Other Staff");
+  });
+});
+
+describe("v2: per-day rendering", () => {
+  it("formatDaysShort returns single label for one day (literal calendar day)", () => {
+    expect(formatDaysShort(["2026-05-23"], "America/Toronto")).toBe(
+      "Sat May 23",
+    );
+  });
+
+  it("formatDaysShort joins two days with a comma", () => {
+    expect(
+      formatDaysShort(["2026-05-23", "2026-05-24"], "America/Toronto"),
+    ).toMatch(/,/);
+  });
+
+  it("formatDaysShort collapses 3+ consecutive days into a range", () => {
+    const out = formatDaysShort(
+      ["2026-05-23", "2026-05-24", "2026-05-25"],
+      "America/Toronto",
+    );
+    expect(out).toContain("–");
+  });
+
+  it("renderInviteSms with multiple days mentions the day count and list", () => {
+    const out = renderInviteSms({
+      event: sampleEvent,
+      recipient: sampleRecipient,
+      rsvpUrl: "https://x.test/r/1",
+      days: ["2026-05-23", "2026-05-24"],
+    });
+    expect(out).toContain("2 days");
+    expect(out).toContain("Calabogie Safety");
+    expect(out.toUpperCase()).toContain("STOP");
+  });
+
+  it("renderInviteSms with a single-day list uses singular phrasing", () => {
+    const out = renderInviteSms({
+      event: sampleEvent,
+      recipient: sampleRecipient,
+      rsvpUrl: "https://x.test/r/1",
+      days: ["2026-05-23"],
+    });
+    expect(out).toContain("1 day");
+    expect(out).not.toContain("1 days");
+  });
+
+  it("renderInviteEmail subject + body call out the requested days", () => {
+    const out = renderInviteEmail({
+      event: sampleEvent,
+      recipient: sampleRecipient,
+      rsvpUrl: "https://x.test/r/1",
+      days: ["2026-05-23", "2026-05-24"],
+    });
+    expect(out.subject).toMatch(/2 days/);
+    expect(out.text).toContain("Days requested:");
+    expect(out.html).toContain("Days requested:");
+  });
+
+  it("renderInviteEmail without days behaves like v1", () => {
+    const out = renderInviteEmail({
+      event: sampleEvent,
+      recipient: sampleRecipient,
+      rsvpUrl: "https://x.test/r/1",
+    });
+    expect(out.subject).toMatch(/^Rescue Team Request: AISA Driving School —/);
+    expect(out.text).not.toContain("Days requested:");
   });
 });
 

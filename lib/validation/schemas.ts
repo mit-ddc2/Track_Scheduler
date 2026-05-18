@@ -375,6 +375,24 @@ export const sendInvitationCampaignSchema = z.object({
   smsTemplate: z.string().max(1600).optional().nullable(),
   emailSubject: z.string().max(200).optional().nullable(),
   emailTemplate: z.string().max(8000).optional().nullable(),
+  /**
+   * v2: which event days each recipient is being invited for. When omitted
+   * the orchestrator defaults to every day in the event window, preserving
+   * v1 single-day semantics.
+   */
+  days: z
+    .array(
+      z
+        .string()
+        .regex(/^\d{4}-\d{2}-\d{2}$/u, "Must be a YYYY-MM-DD date")
+        .refine(
+          (s) => !Number.isNaN(new Date(`${s}T00:00:00Z`).getTime()),
+          "Must be a valid calendar date",
+        ),
+    )
+    .min(1)
+    .max(30)
+    .optional(),
 });
 export type SendInvitationCampaignInput = z.infer<
   typeof sendInvitationCampaignSchema
@@ -383,7 +401,25 @@ export type SendInvitationCampaignInput = z.infer<
 export const RSVP_ACTIONS = ["accept", "decline", "cancel", "update_note"] as const;
 export type RsvpActionKind = (typeof RSVP_ACTIONS)[number];
 
-/** Public RSVP submission — never trust the client. */
+/**
+ * ISO date string (YYYY-MM-DD). Used by the per-day RSVP payload — every
+ * entry must round-trip through `new Date(...)` to a valid UTC midnight.
+ */
+const isoDateString = z
+  .string()
+  .regex(/^\d{4}-\d{2}-\d{2}$/u, "Must be a YYYY-MM-DD date")
+  .refine((s) => !Number.isNaN(new Date(`${s}T00:00:00Z`).getTime()), {
+    message: "Must be a valid calendar date",
+  });
+
+/**
+ * Public RSVP submission — never trust the client.
+ *
+ * v2: `days` lets responders accept/decline a SUBSET of a multi-day event.
+ * The server validates every entry against the event window. If omitted
+ * (single-day clients / older invites) the handler falls back to the
+ * event's start date.
+ */
 export const rsvpSubmitSchema = z.object({
   token: z
     .string()
@@ -391,6 +427,11 @@ export const rsvpSubmitSchema = z.object({
     .max(200, { message: "Invalid RSVP link" }),
   action: z.enum(RSVP_ACTIONS),
   note: z.string().trim().max(500).optional().nullable(),
+  days: z
+    .array(isoDateString)
+    .min(1, "Pick at least one day")
+    .max(30, "Too many days")
+    .optional(),
 });
 export type RsvpSubmitInput = z.infer<typeof rsvpSubmitSchema>;
 
