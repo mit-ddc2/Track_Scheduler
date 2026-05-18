@@ -14,11 +14,17 @@ if (typeof window !== "undefined") {
 import { writeAudit } from "@/lib/db/audit";
 import { createAdminClient } from "@/lib/db/supabase-admin";
 import type {
-  AssignmentSummary,
-  Coverage,
-  InviteSummary,
+  CoverageByDay,
+  DayAssignmentSummary,
+  DayInviteSummary,
 } from "@/lib/events/coverage";
-import { computeCoverage, statusForCoverage } from "@/lib/events/coverage";
+import {
+  computeCoverageByDay,
+  enumerateEventDays,
+  flattenCoverage,
+  isAnyDayShort,
+  statusForCoverage,
+} from "@/lib/events/coverage";
 import { createManagerNotification } from "@/lib/notifications/create-manager-notification";
 import { hashRsvpToken } from "@/lib/security/token";
 import {
@@ -58,6 +64,8 @@ export type LoadedInvite = {
   event_title?: string;
   event_required_headcount?: number;
   event_status?: string;
+  event_starts_at?: string;
+  event_ends_at?: string;
   staff_display_name?: string;
 };
 
@@ -115,7 +123,7 @@ export async function loadInviteByTokenInternal(
     tokRes = await admin
       .from("rsvp_tokens")
       .select(
-        "id, invite_id, expires_at, used_at, event_invites(id, event_id, staff_member_id, status, events(id, title, required_headcount, status), staff_members(id, display_name))",
+        "id, invite_id, expires_at, used_at, event_invites(id, event_id, staff_member_id, status, events(id, title, required_headcount, status, starts_at, ends_at), staff_members(id, display_name))",
       )
       .eq("token_hash", hash)
       .maybeSingle();
@@ -141,6 +149,8 @@ export async function loadInviteByTokenInternal(
         title: string;
         required_headcount: number;
         status: string;
+        starts_at: string;
+        ends_at: string;
       } | null;
       staff_members?: { id: string; display_name: string } | null;
     } | null;
@@ -153,7 +163,13 @@ export async function loadInviteByTokenInternal(
     status: string;
   };
   let eventHydrated:
-    | { title: string; required_headcount: number; status: string }
+    | {
+        title: string;
+        required_headcount: number;
+        status: string;
+        starts_at: string;
+        ends_at: string;
+      }
     | null = null;
   let staffHydrated: { display_name: string } | null = null;
 
@@ -169,6 +185,8 @@ export async function loadInviteByTokenInternal(
         title: token.event_invites.events.title,
         required_headcount: token.event_invites.events.required_headcount,
         status: token.event_invites.events.status,
+        starts_at: token.event_invites.events.starts_at,
+        ends_at: token.event_invites.events.ends_at,
       };
     }
     if (token.event_invites.staff_members) {
@@ -260,6 +278,8 @@ export async function loadInviteByTokenInternal(
       event_title: eventHydrated?.title,
       event_required_headcount: eventHydrated?.required_headcount,
       event_status: eventHydrated?.status,
+      event_starts_at: eventHydrated?.starts_at,
+      event_ends_at: eventHydrated?.ends_at,
       staff_display_name: staffHydrated?.display_name,
     },
   };
@@ -317,7 +337,7 @@ export async function submitRsvpResponseImpl(
       error: parsed.error.issues[0]?.message ?? "Invalid submission",
     };
   }
-  const { token, action, note } = parsed.data;
+  const { token, action, note, days: requestedDays } = parsed.data;
 
   // We need the internal reason for accurate user-facing copy (expired vs
   // unavailable), but we explicitly do NOT leak which one to the public:
@@ -356,16 +376,20 @@ export async function submitRsvpResponseImpl(
   let eventTitle: string = invite.event_title ?? "(untitled event)";
   let requiredHeadcount: number = invite.event_required_headcount ?? 0;
   let currentEventStatus: string = invite.event_status ?? "scheduled";
+  let eventStartsAt: string | undefined = invite.event_starts_at;
+  let eventEndsAt: string | undefined = invite.event_ends_at;
   if (
     invite.event_title === undefined ||
     invite.event_required_headcount === undefined ||
-    invite.event_status === undefined
+    invite.event_status === undefined ||
+    invite.event_starts_at === undefined ||
+    invite.event_ends_at === undefined
   ) {
     let evRes: { data: unknown };
     try {
       evRes = await admin
         .from("events")
-        .select("id, title, required_headcount, status")
+        .select("id, title, required_headcount, status, starts_at, ends_at")
         .eq("id", invite.event_id)
         .maybeSingle();
     } catch (err) {
@@ -373,13 +397,45 @@ export async function submitRsvpResponseImpl(
       return { ok: false, error: PUBLIC_SAVE_ERROR };
     }
     const evData = evRes.data as
-      | { title?: string; required_headcount?: number; status?: string }
+      | {
+          title?: string;
+          required_headcount?: number;
+          status?: string;
+          starts_at?: string;
+          ends_at?: string;
+        }
       | null;
     eventTitle = (evData?.title as string | undefined) ?? "(untitled event)";
     requiredHeadcount =
       (evData?.required_headcount as number | undefined) ?? 0;
     currentEventStatus =
       (evData?.status as string | undefined) ?? "scheduled";
+    eventStartsAt = evData?.starts_at ?? eventStartsAt;
+    eventEndsAt = evData?.ends_at ?? eventEndsAt;
+  }
+
+  // v2: resolve which days this submission targets. Falls back to the
+  // event's start date when the payload omits it (v1 single-day clients).
+  const eventDayList =
+    eventStartsAt && eventEndsAt
+      ? enumerateEventDays(eventStartsAt, eventEndsAt)
+      : [];
+  const validDays = new Set(eventDayList);
+  const days =
+    requestedDays && requestedDays.length > 0
+      ? Array.from(new Set(requestedDays)).sort()
+      : eventStartsAt
+        ? [eventStartsAt.slice(0, 10)]
+        : [];
+
+  if (days.length === 0) {
+    return { ok: false, error: "invalid_days" };
+  }
+  if (validDays.size > 0) {
+    const outOfRange = days.filter((d) => !validDays.has(d));
+    if (outOfRange.length > 0) {
+      return { ok: false, error: "invalid_days" };
+    }
   }
 
   const newInviteStatus = mapActionToInviteStatus(action, invite.status);
@@ -393,76 +449,136 @@ export async function submitRsvpResponseImpl(
   const nowIso = new Date().toISOString();
   const oldStatus = invite.status;
 
+  // v2: load every existing invite row for (event, staff) so we can apply
+  // the action per-day. The token-bound invite row remains the audit
+  // anchor but the writes fan out across each requested day.
+  let existingInvitesByDay = new Map<
+    string,
+    { id: string; status: string }
+  >();
   try {
-    if (newInviteStatus) {
-      const upd = await admin
-        .from("event_invites")
-        .update({
-          status: newInviteStatus,
-          response_note: note ?? null,
-          responded_at: nowIso,
-          updated_at: nowIso,
-        })
-        .eq("id", invite.invite_id);
-      if (upd.error) {
-        console.error("[rsvp] invite update error:", upd.error.message);
-        return { ok: false, error: PUBLIC_SAVE_ERROR };
-      }
-    } else if (note !== undefined && note !== null) {
-      const upd = await admin
-        .from("event_invites")
-        .update({
-          response_note: note,
-          updated_at: nowIso,
-        })
-        .eq("id", invite.invite_id);
-      if (upd.error) {
-        console.error("[rsvp] invite note update error:", upd.error.message);
-        return { ok: false, error: PUBLIC_SAVE_ERROR };
-      }
-    }
-
-    // P-H2: response history insert, assignment write, and rsvp_tokens
-    // update are all independent — fan them out via Promise.all instead of
-    // running serially. The assignment write is a single upsert on the
-    // (event_id, staff_member_id) unique key instead of select-then-
-    // update-or-insert (cuts 1 round-trip).
-    const writes: Array<Promise<unknown>> = [];
-
-    writes.push(
-      admin.from("invite_response_history").insert({
-        invite_id: invite.invite_id,
-        event_id: invite.event_id,
-        staff_member_id: invite.staff_member_id,
-        old_status: oldStatus,
-        new_status: newInviteStatus ?? oldStatus,
-        response_note: note ?? null,
-        actor_type: "responder_token",
-      }),
+    const existingRes = await admin
+      .from("event_invites")
+      .select("id, day_date, status")
+      .eq("event_id", invite.event_id)
+      .eq("staff_member_id", invite.staff_member_id);
+    const existing =
+      ((existingRes.data ?? []) as Array<{
+        id: string;
+        day_date: string;
+        status: string;
+      }>) ?? [];
+    existingInvitesByDay = new Map(
+      existing.map((r) => [r.day_date, { id: r.id, status: r.status }]),
     );
+  } catch (err) {
+    console.warn("[rsvp] existing-invite lookup failed:", err);
+  }
 
-    if (action === "accept") {
-      writes.push(
-        admin
-          .from("event_assignments")
-          .upsert(
-            {
+  type DayResult = "accepted" | "declined" | "cancelled" | "noop";
+  const dayResults: Record<string, DayResult> = {};
+
+  try {
+    for (const dayDate of days) {
+      const existing = existingInvitesByDay.get(dayDate);
+      // Resolve or create the invite row for this day.
+      let inviteRowId: string | null = existing?.id ?? null;
+      const dayOldStatus = existing?.status ?? "invited";
+
+      if (newInviteStatus) {
+        if (inviteRowId) {
+          const upd = await admin
+            .from("event_invites")
+            .update({
+              status: newInviteStatus,
+              response_note: note ?? null,
+              responded_at: nowIso,
+              updated_at: nowIso,
+            })
+            .eq("id", inviteRowId);
+          if (upd.error) {
+            console.error("[rsvp] invite update error:", upd.error.message);
+            return { ok: false, error: PUBLIC_SAVE_ERROR };
+          }
+        } else {
+          // First-time write for this day — happens when the responder
+          // accepts a day they weren't explicitly invited to via the link
+          // (e.g., a multi-day event where the campaign was scoped to a
+          // subset). Insert a fresh invite row tied to this campaign.
+          const ins = await admin
+            .from("event_invites")
+            .insert({
               event_id: invite.event_id,
               staff_member_id: invite.staff_member_id,
-              invite_id: invite.invite_id,
-              status: "confirmed",
-              confirmed_at: nowIso,
-              cancelled_at: null,
-              updated_at: nowIso,
-            },
-            { onConflict: "event_id,staff_member_id" },
-          ),
-      );
-    } else if (action === "cancel" || action === "decline") {
-      // For cancel/decline we only update existing assignments (no insert).
-      // .update().eq().eq() is a single round-trip — no need to SELECT first.
-      writes.push(
-        admin
+              status: newInviteStatus,
+              selected_channels: [],
+              response_note: note ?? null,
+              responded_at: nowIso,
+              day_date: dayDate,
+            })
+            .select("id")
+            .single();
+          if (ins.error || !ins.data) {
+            console.error(
+              "[rsvp] invite insert error:",
+              ins.error?.message ?? "unknown",
+            );
+            return { ok: false, error: PUBLIC_SAVE_ERROR };
+          }
+          inviteRowId = ins.data.id as string;
+        }
+      } else if (note !== undefined && note !== null && inviteRowId) {
+        const upd = await admin
+          .from("event_invites")
+          .update({
+            response_note: note,
+            updated_at: nowIso,
+          })
+          .eq("id", inviteRowId);
+        if (upd.error) {
+          console.error(
+            "[rsvp] invite note update error:",
+            upd.error.message,
+          );
+          return { ok: false, error: PUBLIC_SAVE_ERROR };
+        }
+      }
+
+      if (!inviteRowId) {
+        // Pure note-save with no existing invite for this day — nothing to do.
+        dayResults[dayDate] = "noop";
+        continue;
+      }
+
+      // Per-day response history entry.
+      await admin.from("invite_response_history").insert({
+        invite_id: inviteRowId,
+        event_id: invite.event_id,
+        staff_member_id: invite.staff_member_id,
+        old_status: dayOldStatus,
+        new_status: newInviteStatus ?? dayOldStatus,
+        response_note: note ?? null,
+        actor_type: "responder_token",
+      });
+
+      // Per-day assignment write.
+      if (action === "accept") {
+        await admin.from("event_assignments").upsert(
+          {
+            event_id: invite.event_id,
+            staff_member_id: invite.staff_member_id,
+            invite_id: inviteRowId,
+            status: "confirmed",
+            confirmed_at: nowIso,
+            cancelled_at: null,
+            updated_at: nowIso,
+            day_date: dayDate,
+          },
+          { onConflict: "event_id,staff_member_id,day_date" },
+        );
+        dayResults[dayDate] = "accepted";
+      } else if (action === "cancel" || action === "decline") {
+        await admin
           .from("event_assignments")
           .update({
             status: "cancelled",
@@ -472,51 +588,68 @@ export async function submitRsvpResponseImpl(
             updated_at: nowIso,
           })
           .eq("event_id", invite.event_id)
-          .eq("staff_member_id", invite.staff_member_id),
-      );
+          .eq("staff_member_id", invite.staff_member_id)
+          .eq("day_date", dayDate);
+        dayResults[dayDate] = action === "cancel" ? "cancelled" : "declined";
+      } else {
+        dayResults[dayDate] = "noop";
+      }
     }
 
     if (action !== "update_note") {
-      writes.push(
-        admin
-          .from("rsvp_tokens")
-          .update({ used_at: nowIso })
-          .eq("id", invite.token_id),
-      );
+      await admin
+        .from("rsvp_tokens")
+        .update({ used_at: nowIso })
+        .eq("id", invite.token_id);
     }
-
-    await Promise.all(writes);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error("[rsvp] submit DB error:", msg);
     return { ok: false, error: PUBLIC_SAVE_ERROR };
   }
 
-  let coverage: Coverage;
+  let coverage: CoverageByDay;
   try {
-    coverage = await recomputeCoverage(admin, invite.event_id, requiredHeadcount);
+    coverage = await recomputeCoverageByDay(
+      admin,
+      invite.event_id,
+      eventStartsAt ?? new Date().toISOString(),
+      eventEndsAt ?? new Date().toISOString(),
+      requiredHeadcount,
+    );
   } catch (err) {
     console.error("[rsvp] coverage recompute threw:", err);
-    // Fall through with a neutral coverage shape — we already saved the
-    // primary response above.
     coverage = {
-      confirmed: 0,
-      pending: 0,
-      declined: 0,
-      cancelled: 0,
-      partial: 0,
-      short: requiredHeadcount,
-      surplus: 0,
-      needed: requiredHeadcount,
+      days: [],
+      total: {
+        confirmed: 0,
+        pending: 0,
+        declined: 0,
+        cancelled: 0,
+        partial: 0,
+        needed: requiredHeadcount,
+        short: requiredHeadcount,
+        surplus: 0,
+      },
     };
   }
 
   try {
-    const nextStatus = statusForCoverage(
+    // Event status: derive from the aggregate, but a multi-day event is
+    // `underfilled` as long as ANY day is short.
+    const flat = flattenCoverage(coverage);
+    let nextStatus = statusForCoverage(
       currentEventStatus as Parameters<typeof statusForCoverage>[0],
-      coverage,
+      flat,
       true,
     );
+    if (isAnyDayShort(coverage)) {
+      // Override "staffed"/"inviting" to "underfilled" when at least one day
+      // hasn't met its headcount yet.
+      if (nextStatus === "staffed" || nextStatus === "inviting") {
+        nextStatus = "underfilled";
+      }
+    }
     if (nextStatus !== currentEventStatus) {
       await admin
         .from("events")
@@ -527,6 +660,16 @@ export async function submitRsvpResponseImpl(
     console.error("[rsvp] event status update threw:", err);
   }
 
+  // v2: single notification summarising the per-day outcome.
+  const acceptedCount = Object.values(dayResults).filter(
+    (r) => r === "accepted",
+  ).length;
+  const declinedCount = Object.values(dayResults).filter(
+    (r) => r === "declined",
+  ).length;
+  const cancelledCount = Object.values(dayResults).filter(
+    (r) => r === "cancelled",
+  ).length;
   try {
     await emitManagerNotification({
       action,
@@ -535,6 +678,10 @@ export async function submitRsvpResponseImpl(
       eventTitle,
       staffName,
       staffMemberId: invite.staff_member_id,
+      acceptedDays: acceptedCount,
+      declinedDays: declinedCount,
+      cancelledDays: cancelledCount,
+      totalDays: days.length,
     });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -545,11 +692,13 @@ export async function submitRsvpResponseImpl(
     action: `rsvp.${action}`,
     entity_type: "event_invite",
     entity_id: invite.invite_id,
-    summary: `${staffName} ${action}ed invitation for "${eventTitle}"`,
-    before: { status: oldStatus },
+    summary: `${staffName} ${action}ed invitation for "${eventTitle}" (${days.length} day${days.length === 1 ? "" : "s"})`,
+    before: { status: oldStatus, days },
     after: {
       status: newInviteStatus ?? oldStatus,
       note: note ?? null,
+      days,
+      perDay: dayResults,
     },
     actorType: "responder_token",
     actorId: null,
@@ -566,36 +715,72 @@ export async function submitRsvpResponseImpl(
   return { ok: true, state: resultState };
 }
 
-async function recomputeCoverage(
+async function recomputeCoverageByDay(
   admin: UntypedClient,
   eventId: string,
+  eventStartsAt: string,
+  eventEndsAt: string,
   requiredHeadcount: number,
-): Promise<Coverage> {
+): Promise<CoverageByDay> {
   const [invitesRes, assignmentsRes] = await Promise.all([
-    admin.from("event_invites").select("status").eq("event_id", eventId),
-    admin.from("event_assignments").select("status").eq("event_id", eventId),
+    admin
+      .from("event_invites")
+      .select("status, day_date")
+      .eq("event_id", eventId),
+    admin
+      .from("event_assignments")
+      .select("status, day_date")
+      .eq("event_id", eventId),
   ]);
-  const invites = ((invitesRes.data ?? []) as InviteSummary[]) ?? [];
+  const invites = ((invitesRes.data ?? []) as DayInviteSummary[]) ?? [];
   const assignments =
-    ((assignmentsRes.data ?? []) as AssignmentSummary[]) ?? [];
-  return computeCoverage(invites, assignments, requiredHeadcount);
+    ((assignmentsRes.data ?? []) as DayAssignmentSummary[]) ?? [];
+  return computeCoverageByDay(
+    invites,
+    assignments,
+    eventStartsAt,
+    eventEndsAt,
+    requiredHeadcount,
+  );
 }
 
 async function emitManagerNotification(args: {
   action: RsvpActionKind;
-  coverage: Coverage;
+  coverage: CoverageByDay;
   eventId: string;
   eventTitle: string;
   staffName: string;
   staffMemberId: string;
+  acceptedDays: number;
+  declinedDays: number;
+  cancelledDays: number;
+  totalDays: number;
 }) {
-  const { action, coverage, eventId, eventTitle, staffName, staffMemberId } =
-    args;
+  const {
+    action,
+    coverage,
+    eventId,
+    eventTitle,
+    staffName,
+    staffMemberId,
+    acceptedDays,
+    declinedDays,
+    cancelledDays,
+    totalDays,
+  } = args;
+  const summaryParts: string[] = [];
+  if (acceptedDays > 0) summaryParts.push(`${acceptedDays} day(s) accepted`);
+  if (declinedDays > 0) summaryParts.push(`${declinedDays} day(s) declined`);
+  if (cancelledDays > 0)
+    summaryParts.push(`${cancelledDays} day(s) cancelled`);
+  if (summaryParts.length === 0) summaryParts.push(`${totalDays} day(s)`);
+  const summary = `${eventTitle} — ${summaryParts.join(", ")}`;
+
   if (action === "accept") {
     await createManagerNotification({
       eventType: "responder.accepted",
       title: `${staffName} accepted`,
-      body: eventTitle,
+      body: summary,
       eventId,
       staffMemberId,
       dedupeKey: `rsvp:accept:${eventId}:${staffMemberId}`,
@@ -604,7 +789,7 @@ async function emitManagerNotification(args: {
     await createManagerNotification({
       eventType: "responder.declined",
       title: `${staffName} declined`,
-      body: eventTitle,
+      body: summary,
       eventId,
       staffMemberId,
       dedupeKey: `rsvp:decline:${eventId}:${staffMemberId}`,
@@ -613,20 +798,23 @@ async function emitManagerNotification(args: {
     await createManagerNotification({
       eventType: "responder.cancelled",
       title: `${staffName} cancelled`,
-      body: eventTitle,
+      body: summary,
       eventId,
       staffMemberId,
       dedupeKey: `rsvp:cancel:${eventId}:${staffMemberId}:${Date.now()}`,
     });
   }
 
-  if ((action === "decline" || action === "cancel") && coverage.short > 0) {
+  if (
+    (action === "decline" || action === "cancel") &&
+    isAnyDayShort(coverage)
+  ) {
     await createManagerNotification({
       eventType: "event.underfilled",
       title: "Event underfilled",
-      body: `${eventTitle} — short ${coverage.short}`,
+      body: `${eventTitle} — short ${coverage.total.short}`,
       eventId,
-      dedupeKey: `event.underfilled:${eventId}:${coverage.short}`,
+      dedupeKey: `event.underfilled:${eventId}:${coverage.total.short}`,
     });
   }
 }

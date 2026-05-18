@@ -124,7 +124,7 @@ export async function setAttendanceStatus(
   // scheduled window into the attendance row on first write.
   const { data: assignment, error: aError } = await supabase
     .from("event_assignments")
-    .select("id")
+    .select("id, day_date")
     .eq("event_id", eventId)
     .eq("staff_member_id", staffMemberId)
     .maybeSingle();
@@ -137,6 +137,13 @@ export async function setAttendanceStatus(
     .maybeSingle();
 
   const approvedAt = status === "worked" ? new Date().toISOString() : null;
+  // v2: attendance is per-day. Until the attendance UI lifts to a per-day
+  // matrix (Wave B2), default to either the assignment's day_date or the
+  // event's start date so the v1 single-day cycle button keeps working.
+  const dayDate =
+    (assignment as { day_date?: string } | null)?.day_date ??
+    (event?.starts_at ? event.starts_at.slice(0, 10) : null);
+  if (!dayDate) return { error: "Could not resolve event day for attendance" };
 
   const { error } = await supabase.from("attendance_records").upsert(
     {
@@ -148,8 +155,9 @@ export async function setAttendanceStatus(
       scheduled_end: event?.ends_at ?? null,
       approved_by: status === "worked" ? session.profile.id : null,
       approved_at: approvedAt,
+      day_date: dayDate,
     },
-    { onConflict: "event_id,staff_member_id" },
+    { onConflict: "event_id,staff_member_id,day_date" },
   );
 
   if (error) return { error: error.message };
@@ -205,14 +213,21 @@ export async function updateAttendanceDetails(
   let assignmentId: string | null = null;
   let scheduledStart: string | null = null;
   let scheduledEnd: string | null = null;
-  if (!existing) {
+  let assignmentDayDate: string | null = null;
+  let eventStartDayDate: string | null = null;
+  // Always need a day_date for the v2 schema. Pull either the existing
+  // attendance row's day, the assignment's day, or fall back to event start.
+  const existingDay = (existing as { day_date?: string } | null)?.day_date ?? null;
+  if (!existing || !existingDay) {
     const { data: assignment } = await supabase
       .from("event_assignments")
-      .select("id")
+      .select("id, day_date")
       .eq("event_id", eventId)
       .eq("staff_member_id", staffMemberId)
       .maybeSingle();
     assignmentId = assignment?.id ?? null;
+    assignmentDayDate =
+      (assignment as { day_date?: string } | null)?.day_date ?? null;
     const { data: event } = await supabase
       .from("events")
       .select("starts_at, ends_at")
@@ -220,11 +235,17 @@ export async function updateAttendanceDetails(
       .maybeSingle();
     scheduledStart = event?.starts_at ?? null;
     scheduledEnd = event?.ends_at ?? null;
+    eventStartDayDate = event?.starts_at
+      ? event.starts_at.slice(0, 10)
+      : null;
   }
+  const dayDate = existingDay ?? assignmentDayDate ?? eventStartDayDate;
+  if (!dayDate) return { error: "Could not resolve event day for attendance" };
 
   const payload: AttendanceRecordInsert = {
     event_id: eventId,
     staff_member_id: staffMemberId,
+    day_date: dayDate,
   };
   if (!existing) {
     payload.assignment_id = assignmentId;
@@ -240,7 +261,7 @@ export async function updateAttendanceDetails(
 
   const { error } = await supabase
     .from("attendance_records")
-    .upsert(payload, { onConflict: "event_id,staff_member_id" });
+    .upsert(payload, { onConflict: "event_id,staff_member_id,day_date" });
   if (error) return { error: error.message };
 
   await writeAudit({
@@ -290,7 +311,7 @@ export async function markAllWorked(
 
   const { data: assignments, error: aError } = await supabase
     .from("event_assignments")
-    .select("id, staff_member_id")
+    .select("id, staff_member_id, day_date")
     .eq("event_id", eventId)
     .in("status", ["confirmed", "completed"]);
   if (aError) return { error: aError.message };
@@ -301,6 +322,7 @@ export async function markAllWorked(
   }
 
   const now = new Date().toISOString();
+  const fallbackDay = event?.starts_at ? event.starts_at.slice(0, 10) : null;
   const upserts = rows.map((r) => ({
     event_id: eventId,
     staff_member_id: r.staff_member_id,
@@ -310,11 +332,15 @@ export async function markAllWorked(
     scheduled_end: event?.ends_at ?? null,
     approved_by: session.profile.id,
     approved_at: now,
+    day_date:
+      ((r as { day_date?: string }).day_date as string | undefined) ??
+      fallbackDay ??
+      "1970-01-01",
   }));
 
   const { error } = await supabase
     .from("attendance_records")
-    .upsert(upserts, { onConflict: "event_id,staff_member_id" });
+    .upsert(upserts, { onConflict: "event_id,staff_member_id,day_date" });
   if (error) return { error: error.message };
 
   await writeAudit({

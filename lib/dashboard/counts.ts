@@ -74,7 +74,12 @@ export async function getDashboardCounts(): Promise<DashboardCounts> {
     .from("event_invites")
     .select("id", { count: "exact", head: true })
     .in("event_id", eventIds)
-    .in("status", PENDING_INVITE_STATUSES as unknown as string[]);
+    .in(
+      "status",
+      PENDING_INVITE_STATUSES as unknown as ReadonlyArray<
+        "created" | "invited" | "availability_updated"
+      >,
+    );
 
   if (invitesError) {
     console.warn(

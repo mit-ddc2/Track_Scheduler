@@ -228,22 +228,26 @@ export async function resetAndSeedDemoData(
   //    pending (Sara). Enduro: 2 accepted (Robert, Mithun) + 3 pending
   //    (Marc, Sara, Aicha). Multimatic has no invites (treated as offline
   //    pre-staffed).
+  // v2 (migration 0009): every invite carries a `day_date`. The seed events
+  // are single-day; use the event start date.
+  const AISA_DAY = "2026-06-15";
+  const ENDURO_DAY = "2026-06-13";
   const inviteInserts = [
     // AISA accepted
-    { event_id: eventId("AISA Driving School"), staff_member_id: staffId("Robert Lavoie"), status: "accepted", selected_channels: ["sms", "email"], responded_at: new Date().toISOString() },
-    { event_id: eventId("AISA Driving School"), staff_member_id: staffId("Mithun Jothiravi"), status: "accepted", selected_channels: ["sms", "email"], responded_at: new Date().toISOString() },
-    { event_id: eventId("AISA Driving School"), staff_member_id: staffId("Marc Belanger"), status: "accepted", selected_channels: ["sms"], responded_at: new Date().toISOString() },
-    { event_id: eventId("AISA Driving School"), staff_member_id: staffId("Devon Park"), status: "accepted", selected_channels: ["email"], responded_at: new Date().toISOString() },
-    { event_id: eventId("AISA Driving School"), staff_member_id: staffId("Aicha NDiaye"), status: "accepted", selected_channels: ["sms", "email"], responded_at: new Date().toISOString() },
+    { event_id: eventId("AISA Driving School"), staff_member_id: staffId("Robert Lavoie"), status: "accepted", selected_channels: ["sms", "email"], responded_at: new Date().toISOString(), day_date: AISA_DAY },
+    { event_id: eventId("AISA Driving School"), staff_member_id: staffId("Mithun Jothiravi"), status: "accepted", selected_channels: ["sms", "email"], responded_at: new Date().toISOString(), day_date: AISA_DAY },
+    { event_id: eventId("AISA Driving School"), staff_member_id: staffId("Marc Belanger"), status: "accepted", selected_channels: ["sms"], responded_at: new Date().toISOString(), day_date: AISA_DAY },
+    { event_id: eventId("AISA Driving School"), staff_member_id: staffId("Devon Park"), status: "accepted", selected_channels: ["email"], responded_at: new Date().toISOString(), day_date: AISA_DAY },
+    { event_id: eventId("AISA Driving School"), staff_member_id: staffId("Aicha NDiaye"), status: "accepted", selected_channels: ["sms", "email"], responded_at: new Date().toISOString(), day_date: AISA_DAY },
     // AISA pending
-    { event_id: eventId("AISA Driving School"), staff_member_id: staffId("Sara Kovacs"), status: "invited", selected_channels: ["sms", "email"] },
+    { event_id: eventId("AISA Driving School"), staff_member_id: staffId("Sara Kovacs"), status: "invited", selected_channels: ["sms", "email"], day_date: AISA_DAY },
     // Enduro accepted
-    { event_id: eventId("Enduro Race Weekend"), staff_member_id: staffId("Robert Lavoie"), status: "accepted", selected_channels: ["sms", "email"], responded_at: new Date().toISOString() },
-    { event_id: eventId("Enduro Race Weekend"), staff_member_id: staffId("Mithun Jothiravi"), status: "accepted", selected_channels: ["sms", "email"], responded_at: new Date().toISOString() },
+    { event_id: eventId("Enduro Race Weekend"), staff_member_id: staffId("Robert Lavoie"), status: "accepted", selected_channels: ["sms", "email"], responded_at: new Date().toISOString(), day_date: ENDURO_DAY },
+    { event_id: eventId("Enduro Race Weekend"), staff_member_id: staffId("Mithun Jothiravi"), status: "accepted", selected_channels: ["sms", "email"], responded_at: new Date().toISOString(), day_date: ENDURO_DAY },
     // Enduro pending
-    { event_id: eventId("Enduro Race Weekend"), staff_member_id: staffId("Marc Belanger"), status: "invited", selected_channels: ["sms"] },
-    { event_id: eventId("Enduro Race Weekend"), staff_member_id: staffId("Sara Kovacs"), status: "invited", selected_channels: ["sms", "email"] },
-    { event_id: eventId("Enduro Race Weekend"), staff_member_id: staffId("Aicha NDiaye"), status: "invited", selected_channels: ["sms", "email"] },
+    { event_id: eventId("Enduro Race Weekend"), staff_member_id: staffId("Marc Belanger"), status: "invited", selected_channels: ["sms"], day_date: ENDURO_DAY },
+    { event_id: eventId("Enduro Race Weekend"), staff_member_id: staffId("Sara Kovacs"), status: "invited", selected_channels: ["sms", "email"], day_date: ENDURO_DAY },
+    { event_id: eventId("Enduro Race Weekend"), staff_member_id: staffId("Aicha NDiaye"), status: "invited", selected_channels: ["sms", "email"], day_date: ENDURO_DAY },
   ];
   const { data: invites, error: invErr } = await admin
     // event_invites isn't in the hand-rolled types yet — cast keeps inserts loose.
@@ -253,10 +257,17 @@ export async function resetAndSeedDemoData(
   if (invErr || !invites) throw new Error(`insert event_invites: ${invErr?.message}`);
 
   // 10. Assignments — one per accepted invite (counts toward headcount).
-  type InviteRow = { id: string; event_id: string; staff_member_id: string; status: string };
+  type InviteRow = {
+    id: string;
+    event_id: string;
+    staff_member_id: string;
+    status: string;
+    day_date: string;
+  };
   const acceptedInvites = (invites as unknown as InviteRow[]).filter(
     (i) => i.status === "accepted",
   );
+  const aisaEventId = eventId("AISA Driving School");
   const assignmentInserts = acceptedInvites.map((i) => ({
     event_id: i.event_id,
     staff_member_id: i.staff_member_id,
@@ -264,6 +275,11 @@ export async function resetAndSeedDemoData(
     status: "confirmed" as const,
     counts_toward_headcount: true,
     confirmed_at: new Date().toISOString(),
+    // v2: assignments are per-day. Source the day from the matching invite
+    // (it was set above when we inserted the invite rows). If the SELECT
+    // didn't echo it back, fall back to the event's start date.
+    day_date:
+      i.day_date ?? (i.event_id === aisaEventId ? AISA_DAY : ENDURO_DAY),
   }));
   const { error: asnErr } = await admin
     .from("event_assignments")
