@@ -320,6 +320,119 @@ export function renderCampaignChangeNoticeEmail({
   return { subject, html, text };
 }
 
+// ─── Cancellation templates (v2 Wave B3) ─────────────────────────
+/**
+ * Per-spec §8 cancellation fan-out: ONE message per recipient regardless of
+ * how many days they were on. Body lists every affected day.
+ *
+ * Day list formatting differs slightly from the invite/change-notice helpers
+ * — the cancellation copy is a definitive statement (no RSVP/action needed),
+ * so we use a comma-separated list with " + " before the last entry to read
+ * naturally in English ("Sat May 23 + Sun May 24" rather than the en-dash
+ * range used for invites).
+ */
+export type CancellationInput = {
+  event: TemplateEvent;
+  recipient: TemplateRecipient;
+  /** YYYY-MM-DD strings for every day this recipient was on. */
+  dayDates: string[];
+  /** Optional reason from the cancel form — surfaced in the email body. */
+  reason?: string | null;
+  /** Optional owner contact phone — defaults to OWNER_CONTACT_PHONE env. */
+  ownerContactPhone?: string | null;
+};
+
+/**
+ * Format the day list in the human-friendly "A, B + C" style. Empty input
+ * collapses to an empty string. Single entry returns just that entry.
+ */
+export function formatCancellationDays(days: string[] | undefined): string {
+  if (!days || days.length === 0) return "";
+  const sorted = Array.from(new Set(days)).sort();
+  const labels = sorted.map(formatIsoDayLabel);
+  if (labels.length === 1) return labels[0];
+  if (labels.length === 2) return `${labels[0]} + ${labels[1]}`;
+  const head = labels.slice(0, -1).join(", ");
+  const last = labels[labels.length - 1];
+  return `${head} + ${last}`;
+}
+
+function resolveOwnerPhone(input: CancellationInput): string | null {
+  const explicit = input.ownerContactPhone?.trim();
+  if (explicit) return explicit;
+  const envValue = process.env.OWNER_CONTACT_PHONE?.trim();
+  return envValue && envValue.length > 0 ? envValue : null;
+}
+
+export function renderCancellationSms(input: CancellationInput): string {
+  const { event, dayDates } = input;
+  const when = formatCancellationDays(dayDates);
+  const suffix = when ? ` on ${when}` : "";
+  return (
+    `Calabogie Safety: ${event.title}${suffix} has been CANCELLED.` +
+    ` No need to come in. Thanks. - Robert` +
+    ` Reply STOP to opt out.`
+  );
+}
+
+export function renderCancellationEmail(
+  input: CancellationInput,
+): RenderedEmail {
+  const { event, recipient, dayDates, reason } = input;
+  const daysList = formatCancellationDays(dayDates);
+  const subject = daysList
+    ? `CANCELLED: ${event.title} — ${daysList}`
+    : `CANCELLED: ${event.title}`;
+  const ownerPhone = resolveOwnerPhone(input);
+  const greetingName = recipient.display_name;
+  const trimmedReason = reason?.trim() ?? "";
+
+  const textLines: string[] = [
+    `Hi ${greetingName},`,
+    "",
+    daysList
+      ? `${event.title} on ${daysList} has been cancelled. You do not need to come in.`
+      : `${event.title} has been cancelled. You do not need to come in.`,
+  ];
+  if (trimmedReason.length > 0) {
+    textLines.push("", `Reason: ${trimmedReason}`);
+  }
+  textLines.push(
+    "",
+    ownerPhone
+      ? `Questions? Reach Robert at ${ownerPhone}.`
+      : "Questions? Reach out to Robert directly.",
+    "",
+    "Thanks for being on the crew.",
+    "",
+    "— Calabogie Safety",
+  );
+  const text = textLines.join("\n");
+
+  const reasonBlock =
+    trimmedReason.length > 0
+      ? `<p style="background:#fff8e1;padding:8px 12px;border-left:3px solid #f3c623;"><strong>Reason:</strong> ${htmlEscape(trimmedReason)}</p>`
+      : "";
+  const contactLine = ownerPhone
+    ? `Questions? Reach Robert at <a href="tel:${htmlEscape(ownerPhone.replace(/\s+/g, ""))}">${htmlEscape(ownerPhone)}</a>.`
+    : "Questions? Reach out to Robert directly.";
+
+  const html = `<!doctype html>
+<html lang="en"><body style="font-family:system-ui,Arial,sans-serif;line-height:1.5;color:#0d0f1a;">
+<p>Hi ${htmlEscape(greetingName)},</p>
+<p><strong>${htmlEscape(event.title)}</strong>${
+    daysList ? ` on <strong>${htmlEscape(daysList)}</strong>` : ""
+  } has been <strong>cancelled</strong>. You do not need to come in.</p>
+${reasonBlock}
+<p>${contactLine}</p>
+<p>Thanks for being on the crew.</p>
+<hr style="border:none;border-top:1px solid #ddd;margin:24px 0;">
+<p style="font-size:11px;color:#777;">— Calabogie Safety</p>
+</body></html>`;
+
+  return { subject, html, text };
+}
+
 // ─── Helpers exported for tests / outbox ────────────────────────
 /**
  * Estimate the GSM-7 segment count for an SMS body. A single GSM-7 segment

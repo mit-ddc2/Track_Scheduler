@@ -17,6 +17,7 @@ import { requireOwner } from "@/lib/auth/require-owner";
 import { writeAudit } from "@/lib/db/audit";
 import { createClient } from "@/lib/db/supabase-server";
 import type { EventUpdate } from "@/lib/db/types";
+import { sendCancellationFanout } from "@/lib/messaging/cancel-fanout";
 import {
   cancelEventSchema,
   eventCreateSchema,
@@ -214,13 +215,31 @@ export async function updateEvent(
 }
 
 /**
- * Cancel an event. Appends the reason to manager_notes and stamps
- * cancelled_at; Phase 5 will fan out notifications to invitees.
+ * Cancel an event + notify everyone who hasn't already declined.
+ *
+ * v2 Wave B3: after stamping `events.status='cancelled'`, the action fans
+ * out cancellation messages via `sendCancellationFanout()` (one per
+ * recipient, regardless of how many days they were on) and records a
+ * `event.cancelled_with_notification` audit summary.
  */
+export type CancelEventResult = {
+  id?: string;
+  error?: string;
+  /** v2: counts surfaced to the cancel-confirmation UI. */
+  notifications?: {
+    recipients: number;
+    sms_enqueued: number;
+    email_enqueued: number;
+    skipped_no_contact: number;
+    skipped_opt_out: number;
+    skipped_manual_only: number;
+  };
+};
+
 export async function cancelEvent(
   eventId: string,
   rawInput: { reason: string },
-): Promise<{ id?: string; error?: string }> {
+): Promise<CancelEventResult> {
   const session = await requireOwner();
 
   const parsed = cancelEventSchema.safeParse(rawInput);
@@ -263,13 +282,56 @@ export async function cancelEvent(
     return { error: updateError.message };
   }
 
+  // v2: fan out cancellation messages. Best-effort — a failure here must NOT
+  // roll back the cancellation itself (the event IS cancelled either way and
+  // the owner can re-run via the cancel page to re-enqueue).
+  let fanout = {
+    recipients: 0,
+    sms_enqueued: 0,
+    email_enqueued: 0,
+    skipped_no_contact: 0,
+    skipped_opt_out: 0,
+    skipped_manual_only: 0,
+  };
+  let invitesMarked = 0;
+  let assignmentsMarked = 0;
+  try {
+    const res = await sendCancellationFanout({
+      eventId,
+      reason: parsed.data.reason,
+    });
+    fanout = {
+      recipients: res.recipients,
+      sms_enqueued: res.sms_enqueued,
+      email_enqueued: res.email_enqueued,
+      skipped_no_contact: res.skipped_no_contact,
+      skipped_opt_out: res.skipped_opt_out,
+      skipped_manual_only: res.skipped_manual_only,
+    };
+    invitesMarked = res.invites_marked;
+    assignmentsMarked = res.assignments_marked;
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.warn("[cancelEvent] fan-out failed:", msg);
+    // Continue — we still record the cancellation in the audit log.
+  }
+
   await writeAudit({
-    action: "event.cancel",
+    action: "event.cancelled_with_notification",
     entity_type: "event",
     entity_id: eventId,
-    summary: `Cancelled event "${existing.title}"`,
+    summary:
+      fanout.recipients > 0
+        ? `Cancelled "${existing.title}" + notified ${fanout.recipients} (${fanout.sms_enqueued} SMS, ${fanout.email_enqueued} email)`
+        : `Cancelled "${existing.title}" (no notifications enqueued)`,
     before: { status: existing.status },
-    after: { status: "cancelled", reason: parsed.data.reason },
+    after: {
+      status: "cancelled",
+      reason: parsed.data.reason,
+      notifications: fanout,
+      invites_marked: invitesMarked,
+      assignments_marked: assignmentsMarked,
+    },
     actorType: "owner",
     actorId: session.profile.id,
   });
@@ -278,7 +340,7 @@ export async function cancelEvent(
   revalidatePath("/dashboard/events");
   revalidatePath(`/dashboard/events/${eventId}`);
 
-  return { id: eventId };
+  return { id: eventId, notifications: fanout };
 }
 
 /**

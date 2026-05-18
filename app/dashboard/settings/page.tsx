@@ -14,6 +14,8 @@ import Link from "next/link";
 
 import { Card } from "@/components/ui/Card";
 
+import { DrainNowButton } from "./DrainNowButton";
+import { triggerDrainNow } from "./drain-actions";
 import { ResetDemoButton } from "./ResetDemoButton";
 
 type SettingsLink = {
@@ -255,6 +257,50 @@ export default async function SettingsPage({ searchParams }: PageProps) {
             </div>
           </button>
         </form>
+      </Card>
+
+      {/* "Drain now" — needed because Vercel Hobby cron only runs once per
+          day. After Robert hits "Send invites" or "Cancel event" he can hit
+          this to shake the outbox loose immediately. Owner-only via the
+          server action's requireOwner() guard. */}
+      <Card style={{ padding: 16, marginTop: 4 }}>
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 12,
+            marginBottom: 8,
+          }}
+        >
+          <span
+            className="mono"
+            style={{
+              fontSize: 9,
+              background: "var(--chip-bg)",
+              color: "var(--text-3)",
+              padding: "2px 6px",
+              borderRadius: 3,
+              letterSpacing: "0.06em",
+              textTransform: "uppercase",
+            }}
+          >
+            OUTBOX
+          </span>
+          <div style={{ fontWeight: 600, fontSize: 14 }}>Send queued messages</div>
+        </div>
+        <div
+          style={{
+            color: "var(--text-3)",
+            fontSize: 12,
+            marginBottom: 12,
+            lineHeight: 1.5,
+          }}
+        >
+          Triggers the message drain immediately instead of waiting for the
+          daily cron. Use this right after sending invites or cancelling an
+          event so notifications go out within seconds.
+        </div>
+        <DrainNowButton action={triggerDrainNow} />
       </Card>
 
       {resetEnabled && cronSecret && (

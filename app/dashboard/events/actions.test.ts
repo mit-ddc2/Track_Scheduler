@@ -45,6 +45,27 @@ vi.mock("@/lib/db/audit", () => ({
   }),
 }));
 
+// v2 Wave B3: cancelEvent now triggers a cancellation fan-out. Stub the
+// orchestrator so this file's tests stay focused on the action's own
+// validation + audit behaviour. Full fan-out behaviour lives in
+// cancelEvent-fanout.test.ts.
+const sendCancellationFanoutMock = vi.fn(async () => ({
+  recipients: 0,
+  sms_enqueued: 0,
+  email_enqueued: 0,
+  skipped_no_contact: 0,
+  skipped_opt_out: 0,
+  skipped_manual_only: 0,
+  invites_marked: 0,
+  assignments_marked: 0,
+}));
+vi.mock("@/lib/messaging/cancel-fanout", () => ({
+  sendCancellationFanout: (input: unknown) => {
+    sendCancellationFanoutMock.mock.calls.push([input] as never);
+    return sendCancellationFanoutMock();
+  },
+}));
+
 type RpcCall = { name: string; args: unknown };
 const rpcCalls: RpcCall[] = [];
 
