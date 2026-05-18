@@ -4,6 +4,7 @@ import {
   CalendarClock,
   ChevronRight,
   Download,
+  FileSpreadsheet,
   History,
   LogOut,
   MessageSquare,
@@ -42,6 +43,14 @@ const LINKS: SettingsLink[] = [
     title: "Qualifications",
     description: "Manage capability tags (Fire Suppression, Extrication, First Aid…)",
     icon: Award,
+    visibility: "always",
+  },
+  {
+    href: "/dashboard/events/import",
+    title: "Import events",
+    description:
+      "Bulk-import events from Robert's planning spreadsheet (xlsx).",
+    icon: FileSpreadsheet,
     visibility: "always",
   },
   {
