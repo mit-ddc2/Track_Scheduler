@@ -1,10 +1,22 @@
 import Link from "next/link";
+import { notFound } from "next/navigation";
 
 import { Card } from "@/components/ui/Card";
 import { requireOwner } from "@/lib/auth/require-owner";
 
-export default async function CalendarSettingsPage() {
+type PageProps = {
+  searchParams?: Promise<{ advanced?: string }>;
+};
+
+export default async function CalendarSettingsPage({
+  searchParams,
+}: PageProps = {}) {
   await requireOwner();
+  // v2: hidden from simplified settings nav; ?advanced=1 unlocks it.
+  const params = searchParams ? await searchParams : {};
+  if (params.advanced !== "1") {
+    notFound();
+  }
 
   return (
     <div

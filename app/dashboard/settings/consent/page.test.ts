@@ -4,6 +4,9 @@ vi.mock("next/navigation", () => ({
   redirect: vi.fn((url: string) => {
     throw new Error(`__REDIRECT__:${url}`);
   }),
+  notFound: vi.fn(() => {
+    throw new Error("__NOT_FOUND__");
+  }),
 }));
 
 const requireOwnerMock = vi.fn();
@@ -41,8 +44,19 @@ describe("consent settings page", () => {
     });
     const { default: ConsentPage } = await import("./page");
     await expect(
-      ConsentPage({ searchParams: Promise.resolve({}) }),
+      ConsentPage({ searchParams: Promise.resolve({ advanced: "1" }) }),
     ).rejects.toThrow("__REDIRECT__:/login");
+  });
+
+  it("returns notFound() unless ?advanced=1 is supplied", async () => {
+    requireOwnerMock.mockResolvedValue({
+      user: { id: "u1" },
+      profile: { id: "u1", is_owner: true },
+    });
+    const { default: ConsentPage } = await import("./page");
+    await expect(
+      ConsentPage({ searchParams: Promise.resolve({}) }),
+    ).rejects.toThrow("__NOT_FOUND__");
   });
 
   it("renders per-staff tab with consent + status rows", async () => {
@@ -67,7 +81,9 @@ describe("consent settings page", () => {
     ]);
     listConsentHistoryForMock.mockResolvedValueOnce(new Map());
     const { default: ConsentPage } = await import("./page");
-    const out = await ConsentPage({ searchParams: Promise.resolve({}) });
+    const out = await ConsentPage({
+      searchParams: Promise.resolve({ advanced: "1" }),
+    });
     expect(out).toBeTruthy();
     expect(listConsentRowsMock).toHaveBeenCalledTimes(1);
     expect(listConsentHistoryForMock).toHaveBeenCalledWith(["s1"]);
@@ -109,7 +125,7 @@ describe("consent settings page", () => {
     listConsentHistoryForMock.mockResolvedValueOnce(new Map());
     const { default: ConsentPage } = await import("./page");
     const out = await ConsentPage({
-      searchParams: Promise.resolve({ tab: "opt-outs" }),
+      searchParams: Promise.resolve({ tab: "opt-outs", advanced: "1" }),
     });
     expect(out).toBeTruthy();
   });

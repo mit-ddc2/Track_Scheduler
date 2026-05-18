@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { notFound } from "next/navigation";
 import { formatInTimeZone } from "date-fns-tz";
 import { Download } from "lucide-react";
 
@@ -61,8 +62,17 @@ function fmtRelative(iso: string | null, now: Date = new Date()): string {
   return `${diffDay}d ago`;
 }
 
-export default async function ExportsPage() {
+type PageProps = {
+  searchParams?: Promise<{ advanced?: string }>;
+};
+
+export default async function ExportsPage({ searchParams }: PageProps = {}) {
   await requireOwner();
+  // v2: hidden from simplified settings nav; ?advanced=1 unlocks it.
+  const params = searchParams ? await searchParams : {};
+  if (params.advanced !== "1") {
+    notFound();
+  }
   const [staffCount, events, lastRosterExport, lastPayrollExport] =
     await Promise.all([
       fetchActiveStaffCount(),

@@ -2,8 +2,7 @@
 
 import {
   Calendar,
-  Inbox,
-  MoreHorizontal,
+  Settings,
   Users,
   type LucideIcon,
 } from "lucide-react";
@@ -19,6 +18,9 @@ type NavItem = {
   match: (pathname: string) => boolean;
 };
 
+// v2 simplification: dropped "Activity" — the notification bell in the
+// top bar covers unread alerts and links into /dashboard/notifications
+// when you tap it. Three primary destinations only.
 const NAV_ITEMS: NavItem[] = [
   {
     href: "/dashboard",
@@ -33,15 +35,9 @@ const NAV_ITEMS: NavItem[] = [
     match: (p) => p.startsWith("/dashboard/roster"),
   },
   {
-    href: "/dashboard/notifications",
-    label: "Activity",
-    icon: Inbox,
-    match: (p) => p.startsWith("/dashboard/notifications"),
-  },
-  {
     href: "/dashboard/settings",
-    label: "More",
-    icon: MoreHorizontal,
+    label: "Settings",
+    icon: Settings,
     match: (p) => p.startsWith("/dashboard/settings"),
   },
 ];
@@ -68,7 +64,7 @@ export function BottomNav() {
       <div
         style={{
           display: "grid",
-          gridTemplateColumns: "repeat(4, 1fr)",
+          gridTemplateColumns: "repeat(3, 1fr)",
         }}
       >
         {NAV_ITEMS.map((item) => {

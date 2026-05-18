@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { notFound } from "next/navigation";
 
 import { Btn } from "@/components/ui/Btn";
 import { Card } from "@/components/ui/Card";
@@ -9,8 +10,19 @@ import type { MockSentSmsRow } from "@/lib/db/types";
 // Diagnostic page; should always reflect the latest writes from the outbox.
 export const dynamic = "force-dynamic";
 
-export default async function MockSmsLogPage() {
+type PageProps = {
+  searchParams?: Promise<{ advanced?: string }>;
+};
+
+export default async function MockSmsLogPage({
+  searchParams,
+}: PageProps = {}) {
   await requireOwner();
+  // v2: hidden from public discovery; ?advanced=1 unlocks it for debugging.
+  const params = searchParams ? await searchParams : {};
+  if (params.advanced !== "1") {
+    notFound();
+  }
   const supabase = await createServerClient();
 
   const { data, error } = await supabase

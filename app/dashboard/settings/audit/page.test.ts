@@ -11,6 +11,9 @@ vi.mock("next/navigation", () => ({
   redirect: vi.fn((url: string) => {
     throw new Error(`__REDIRECT__:${url}`);
   }),
+  notFound: vi.fn(() => {
+    throw new Error("__NOT_FOUND__");
+  }),
 }));
 
 const requireOwnerMock = vi.fn();
@@ -41,8 +44,19 @@ describe("audit settings page", () => {
     });
     const { default: AuditPage } = await import("./page");
     await expect(
-      AuditPage({ searchParams: Promise.resolve({}) }),
+      AuditPage({ searchParams: Promise.resolve({ advanced: "1" }) }),
     ).rejects.toThrow("__REDIRECT__:/login");
+  });
+
+  it("returns notFound() unless ?advanced=1 is supplied", async () => {
+    requireOwnerMock.mockResolvedValue({
+      user: { id: "u1" },
+      profile: { id: "u1", is_owner: true },
+    });
+    const { default: AuditPage } = await import("./page");
+    await expect(
+      AuditPage({ searchParams: Promise.resolve({}) }),
+    ).rejects.toThrow("__NOT_FOUND__");
   });
 
   it("forwards filters from the URL to listAuditLog and renders rows", async () => {
@@ -68,7 +82,11 @@ describe("audit settings page", () => {
     ]);
     const { default: AuditPage } = await import("./page");
     const out = await AuditPage({
-      searchParams: Promise.resolve({ action: "staff", range: "7d" }),
+      searchParams: Promise.resolve({
+        action: "staff",
+        range: "7d",
+        advanced: "1",
+      }),
     });
     expect(out).toBeTruthy();
     expect(listAuditLogMock).toHaveBeenCalledTimes(1);
@@ -89,7 +107,9 @@ describe("audit settings page", () => {
     });
     listAuditLogMock.mockResolvedValueOnce([]);
     const { default: AuditPage } = await import("./page");
-    const out = await AuditPage({ searchParams: Promise.resolve({}) });
+    const out = await AuditPage({
+      searchParams: Promise.resolve({ advanced: "1" }),
+    });
     expect(out).toBeTruthy();
     expect(listAuditLogMock).toHaveBeenCalledTimes(1);
   });

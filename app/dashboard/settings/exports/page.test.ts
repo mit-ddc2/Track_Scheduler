@@ -4,6 +4,9 @@ vi.mock("next/navigation", () => ({
   redirect: vi.fn((url: string) => {
     throw new Error(`__REDIRECT__:${url}`);
   }),
+  notFound: vi.fn(() => {
+    throw new Error("__NOT_FOUND__");
+  }),
 }));
 
 const requireOwnerMock = vi.fn();
@@ -93,12 +96,25 @@ afterEach(() => {
 });
 
 describe("exports settings page", () => {
+  it("returns notFound() unless ?advanced=1 is supplied", async () => {
+    requireOwnerMock.mockResolvedValue({
+      user: { id: "u1" },
+      profile: { id: "u1", is_owner: true },
+    });
+    const { default: ExportsPage } = await import("./page");
+    await expect(
+      ExportsPage({ searchParams: Promise.resolve({}) }),
+    ).rejects.toThrow("__NOT_FOUND__");
+  });
+
   it("propagates redirect when caller is not an owner", async () => {
     requireOwnerMock.mockImplementationOnce(async () => {
       throw new Error("__REDIRECT__:/login");
     });
     const { default: ExportsPage } = await import("./page");
-    await expect(ExportsPage()).rejects.toThrow("__REDIRECT__:/login");
+    await expect(
+      ExportsPage({ searchParams: Promise.resolve({ advanced: "1" }) }),
+    ).rejects.toThrow("__REDIRECT__:/login");
   });
 
   it("renders successfully with active staff count + recent events", async () => {
@@ -108,7 +124,9 @@ describe("exports settings page", () => {
     });
     latestActionsMock.mockResolvedValue("2026-05-16T00:00:00Z");
     const { default: ExportsPage } = await import("./page");
-    const out = await ExportsPage();
+    const out = await ExportsPage({
+      searchParams: Promise.resolve({ advanced: "1" }),
+    });
     expect(out).toBeTruthy();
     // One call for roster.export_csv/roster.export, one for payroll.export.
     expect(latestActionsMock).toHaveBeenCalledTimes(2);
@@ -142,7 +160,9 @@ describe("exports settings page", () => {
       throw new Error(`unexpected table ${table}`);
     });
     const { default: ExportsPage } = await import("./page");
-    const out = await ExportsPage();
+    const out = await ExportsPage({
+      searchParams: Promise.resolve({ advanced: "1" }),
+    });
     expect(out).toBeTruthy();
   });
 });
