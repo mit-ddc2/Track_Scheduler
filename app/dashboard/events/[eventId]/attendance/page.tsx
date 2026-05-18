@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 
 import { AttendanceList } from "@/components/attendance/AttendanceList";
 import { MarkAllWorkedButton } from "@/components/attendance/MarkAllWorkedButton";
+import { PdfExportButton } from "@/components/attendance/PdfExportButton";
 import { Card } from "@/components/ui/Card";
 import { requireOwner } from "@/lib/auth/require-owner";
 import { listEventAttendance } from "@/lib/attendance/queries";
@@ -17,17 +18,23 @@ import { markAllWorked, setAttendanceStatus, updateAttendanceDetails } from "./a
 
 type PageProps = {
   params: Promise<{ eventId: string }>;
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
 };
 
-export default async function AttendancePage({ params }: PageProps) {
+export default async function AttendancePage({ params, searchParams }: PageProps) {
   await requireOwner();
   const { eventId } = await params;
+  const sp = await searchParams;
+  const advanced = sp?.advanced === "1";
 
   const event = await getEvent(eventId);
   if (!event) notFound();
 
   const rows = await listEventAttendance(eventId);
   const tz = event.timezone || "America/Toronto";
+  // Defaults for the PDF date-range modal: the event's own start/end day.
+  const pdfFrom = event.starts_at.slice(0, 10);
+  const pdfTo = event.ends_at.slice(0, 10);
 
   const listRows = rows.map((r) => ({
     staff_member_id: r.staff_member_id,
@@ -66,22 +73,24 @@ export default async function AttendancePage({ params }: PageProps) {
           </div>
         </header>
 
-        <div style={{ display: "flex", gap: 6, marginBottom: 12 }}>
+        <div style={{ display: "flex", gap: 6, marginBottom: 12, flexWrap: "wrap" }}>
           <MarkAllWorkedButton eventId={event.id} action={markAllWorked} />
-          <Link
-            href={`/api/exports/payroll/${event.id}`}
-            className="cs-btn cs-btn--ghost cs-btn--sm"
-            style={{
-              textDecoration: "none",
-              display: "inline-flex",
-              alignItems: "center",
-              gap: 6,
-            }}
-            aria-label="Download payroll CSV"
-          >
-            <span aria-hidden style={{ fontSize: 14 }}>↓</span>
-            CSV
-          </Link>
+          {advanced ? (
+            <Link
+              href={`/api/exports/payroll/${event.id}`}
+              className="cs-btn cs-btn--ghost cs-btn--sm"
+              style={{
+                textDecoration: "none",
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 6,
+              }}
+              aria-label="Download payroll CSV"
+            >
+              <span aria-hidden style={{ fontSize: 14 }}>↓</span>
+              CSV
+            </Link>
+          ) : null}
         </div>
 
         <Card>
@@ -97,21 +106,24 @@ export default async function AttendancePage({ params }: PageProps) {
       {/* Sticky bottom: Export */}
       <div className="cs-attendance-actionbar-wrap">
         <div className="cs-attendance-actionbar">
-          <Link
-            href={`/api/exports/payroll/${event.id}`}
-            className="cs-btn cs-btn--primary cs-btn--lg"
-            style={{
-              flex: 1,
-              textDecoration: "none",
-              display: "inline-flex",
-              alignItems: "center",
-              justifyContent: "center",
-              gap: 8,
-            }}
-          >
-            <span aria-hidden style={{ fontSize: 14 }}>↓</span>
-            EXPORT PAYROLL CSV · {listRows.length} ROWS
-          </Link>
+          <PdfExportButton defaultFrom={pdfFrom} defaultTo={pdfTo} />
+          {advanced ? (
+            <Link
+              href={`/api/exports/payroll/${event.id}`}
+              className="cs-btn cs-btn--ghost cs-btn--sm"
+              style={{
+                textDecoration: "none",
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: 6,
+              }}
+              aria-label="Download payroll CSV"
+            >
+              <span aria-hidden style={{ fontSize: 14 }}>↓</span>
+              CSV
+            </Link>
+          ) : null}
         </div>
       </div>
       <style>{`
