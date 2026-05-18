@@ -8,20 +8,23 @@ import { CoverageBar } from "@/components/events/CoverageBar";
 import { EventInvitesLive } from "@/components/events/EventInvitesLive";
 import { EventStatusChip } from "@/components/events/EventStatusChip";
 import { MiniStat } from "@/components/events/MiniStat";
+import { PerDayCoverageMatrix } from "@/components/events/PerDayCoverageMatrix";
 import { UnderfilledNudge } from "@/components/events/UnderfilledNudge";
 import { isUnderfilledNudgeDismissed } from "@/components/events/underfilled-nudge-cookie";
 import { requireOwner } from "@/lib/auth/require-owner";
 import { createClient } from "@/lib/db/supabase-server";
-import { computeCoverage } from "@/lib/events/coverage";
+import { computeCoverage, computeCoverageByDay } from "@/lib/events/coverage";
 import { fetchRoleGaps } from "@/lib/events/role-gaps";
 import {
   daysOut,
   formatEventDate,
   formatTimeRange,
+  isMultiDayEvent,
   shortCode,
 } from "@/lib/events/format";
 import {
   getEvent,
+  getEventCoverageDayRows,
   getEventCoverageRows,
   listEventRequirements,
 } from "@/lib/events/queries";
@@ -49,10 +52,25 @@ export default async function EventDetailPage({ params, searchParams }: PageProp
   const event = await getEvent(eventId);
   if (!event) notFound();
 
+  const multiDay = isMultiDayEvent(
+    event.starts_at,
+    event.ends_at,
+    event.timezone,
+  );
+
   const supabase = await createClient();
-  const [requirements, coverageRows, rosterRows, messagesRows] = await Promise.all([
+  const [
+    requirements,
+    coverageRows,
+    coverageDayRows,
+    rosterRows,
+    messagesRows,
+  ] = await Promise.all([
     listEventRequirements(eventId),
     getEventCoverageRows(eventId),
+    multiDay
+      ? getEventCoverageDayRows(eventId)
+      : Promise.resolve({ invites: [], assignments: [] }),
     tab === "roster"
       ? supabase
           .from("event_invites")
@@ -82,6 +100,15 @@ export default async function EventDetailPage({ params, searchParams }: PageProp
     coverageRows.assignments,
     event.required_headcount,
   );
+  const dayCoverage = multiDay
+    ? computeCoverageByDay(
+        coverageDayRows.invites,
+        coverageDayRows.assignments,
+        event.starts_at,
+        event.ends_at,
+        event.required_headcount,
+      )
+    : null;
   const hasInvites = coverageRows.invites.length > 0;
   // The "needs attention" nudge only renders when:
   //   1. the event is actually short on confirmed seats,
@@ -143,80 +170,107 @@ export default async function EventDetailPage({ params, searchParams }: PageProp
           </div>
         </header>
 
-        {/* Big number block */}
-        <Card style={{ padding: 16, marginBottom: 12 }}>
-          <div style={{ display: "flex", alignItems: "flex-end", gap: 12 }}>
-            <div>
-              <div className="cs-label" style={{ marginBottom: 8 }}>
-                Confirmed / Needed
-              </div>
-              <div style={{ display: "flex", alignItems: "baseline", gap: 4 }}>
-                <span
-                  className="cs-data-xl"
-                  style={{
-                    fontSize: 48,
-                    color:
-                      coverage.short > 0
-                        ? "var(--bad)"
-                        : event.required_headcount === 0
-                          ? "var(--text-3)"
-                          : "var(--ok)",
-                  }}
-                >
-                  {coverage.confirmed}
-                </span>
-                <span
-                  className="cs-data-xl"
-                  style={{ fontSize: 28, color: "var(--text-3)" }}
-                >
-                  /{event.required_headcount}
-                </span>
-              </div>
-            </div>
-            <div style={{ flex: 1, paddingBottom: 8 }}>
-              <CoverageBar
-                confirmed={coverage.confirmed}
-                pending={coverage.pending}
-                needed={Math.max(event.required_headcount, 1)}
-                height={10}
-              />
-            </div>
-          </div>
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "repeat(4, 1fr)",
-              gap: 0,
-              marginTop: 14,
-              paddingTop: 14,
-              borderTop: "1px solid var(--line)",
-            }}
-          >
-            <MiniStat n={coverage.confirmed} label="OK" tone="ok" />
-            <MiniStat n={coverage.pending} label="PEND" tone="warn" />
-            <MiniStat n={coverage.declined} label="DECL" tone="bad" />
-            <MiniStat
-              n={coverage.short}
-              label="SHORT"
-              tone={coverage.short > 0 ? "bad" : "idle"}
+        {/* Coverage block.
+            v2: multi-day events render a per-day matrix instead of the
+            single big number card. Single-day events keep the v1 layout. */}
+        {multiDay && dayCoverage ? (
+          <div style={{ marginBottom: 12 }}>
+            <PerDayCoverageMatrix
+              coverage={dayCoverage}
+              timezone={tz}
+              hasInvites={hasInvites}
             />
+            {!hasInvites && (
+              <p
+                style={{
+                  marginTop: 10,
+                  padding: 10,
+                  border: "1px dashed var(--line)",
+                  borderRadius: 4,
+                  color: "var(--text-3)",
+                  fontSize: 12,
+                  textAlign: "center",
+                }}
+              >
+                No invitations sent yet — use SEND INVITES below to get started.
+              </p>
+            )}
           </div>
-          {!hasInvites && (
-            <p
+        ) : (
+          <Card style={{ padding: 16, marginBottom: 12 }}>
+            <div style={{ display: "flex", alignItems: "flex-end", gap: 12 }}>
+              <div>
+                <div className="cs-label" style={{ marginBottom: 8 }}>
+                  Confirmed / Needed
+                </div>
+                <div style={{ display: "flex", alignItems: "baseline", gap: 4 }}>
+                  <span
+                    className="cs-data-xl"
+                    style={{
+                      fontSize: 48,
+                      color:
+                        coverage.short > 0
+                          ? "var(--bad)"
+                          : event.required_headcount === 0
+                            ? "var(--text-3)"
+                            : "var(--ok)",
+                    }}
+                  >
+                    {coverage.confirmed}
+                  </span>
+                  <span
+                    className="cs-data-xl"
+                    style={{ fontSize: 28, color: "var(--text-3)" }}
+                  >
+                    /{event.required_headcount}
+                  </span>
+                </div>
+              </div>
+              <div style={{ flex: 1, paddingBottom: 8 }}>
+                <CoverageBar
+                  confirmed={coverage.confirmed}
+                  pending={coverage.pending}
+                  needed={Math.max(event.required_headcount, 1)}
+                  height={10}
+                />
+              </div>
+            </div>
+            <div
               style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(4, 1fr)",
+                gap: 0,
                 marginTop: 14,
-                padding: 10,
-                border: "1px dashed var(--line)",
-                borderRadius: 4,
-                color: "var(--text-3)",
-                fontSize: 12,
-                textAlign: "center",
+                paddingTop: 14,
+                borderTop: "1px solid var(--line)",
               }}
             >
-              No invitations sent yet — use SEND INVITES below to get started.
-            </p>
-          )}
-        </Card>
+              <MiniStat n={coverage.confirmed} label="OK" tone="ok" />
+              <MiniStat n={coverage.pending} label="PEND" tone="warn" />
+              <MiniStat n={coverage.declined} label="DECL" tone="bad" />
+              <MiniStat
+                n={coverage.short}
+                label="SHORT"
+                tone={coverage.short > 0 ? "bad" : "idle"}
+              />
+            </div>
+            {!hasInvites && (
+              <p
+                style={{
+                  marginTop: 14,
+                  padding: 10,
+                  border: "1px dashed var(--line)",
+                  borderRadius: 4,
+                  color: "var(--text-3)",
+                  fontSize: 12,
+                  textAlign: "center",
+                }}
+              >
+                No invitations sent yet — use SEND INVITES below to get started.
+              </p>
+            )}
+          </Card>
+        )}
 
         {showNudge && !nudgeDismissed && (
           <UnderfilledNudge

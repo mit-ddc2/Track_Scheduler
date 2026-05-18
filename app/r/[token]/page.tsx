@@ -1,9 +1,10 @@
 import { formatInTimeZone } from "date-fns-tz";
 
-import { RsvpForm } from "@/components/rsvp/RsvpForm";
+import { RsvpForm, type RsvpDay } from "@/components/rsvp/RsvpForm";
 import { RsvpExpired } from "@/components/rsvp/RsvpExpired";
 import { createAdminClient } from "@/lib/db/supabase-admin";
-import { computeCoverage } from "@/lib/events/coverage";
+import { computeCoverage, enumerateEventDays } from "@/lib/events/coverage";
+import { isMultiDayEvent } from "@/lib/events/format";
 import { getOwnerContact } from "@/lib/utils/contact";
 
 import { submitRsvpResponse } from "./actions";
@@ -56,28 +57,36 @@ export default async function RsvpPage({ params }: PageProps) {
 
   const admin = createAdminClient();
 
-  const [evRes, staffRes, invitesRes, assignmentsRes] = await Promise.all([
-    admin
-      .from("events")
-      .select(
-        "id, title, starts_at, ends_at, timezone, location, event_type, required_headcount",
-      )
-      .eq("id", loaded.invite.event_id)
-      .maybeSingle(),
-    admin
-      .from("staff_members")
-      .select("id, display_name")
-      .eq("id", loaded.invite.staff_member_id)
-      .maybeSingle(),
-    admin
-      .from("event_invites")
-      .select("status")
-      .eq("event_id", loaded.invite.event_id),
-    admin
-      .from("event_assignments")
-      .select("status")
-      .eq("event_id", loaded.invite.event_id),
-  ]);
+  const [evRes, staffRes, invitesRes, assignmentsRes, myInvitesRes] =
+    await Promise.all([
+      admin
+        .from("events")
+        .select(
+          "id, title, starts_at, ends_at, timezone, location, event_type, required_headcount",
+        )
+        .eq("id", loaded.invite.event_id)
+        .maybeSingle(),
+      admin
+        .from("staff_members")
+        .select("id, display_name")
+        .eq("id", loaded.invite.staff_member_id)
+        .maybeSingle(),
+      admin
+        .from("event_invites")
+        .select("status")
+        .eq("event_id", loaded.invite.event_id),
+      admin
+        .from("event_assignments")
+        .select("status")
+        .eq("event_id", loaded.invite.event_id),
+      // v2: pull THIS responder's per-day invite rows so the form can show
+      // a checkbox per day with the current accept/decline status.
+      admin
+        .from("event_invites")
+        .select("status, day_date")
+        .eq("event_id", loaded.invite.event_id)
+        .eq("staff_member_id", loaded.invite.staff_member_id),
+    ]);
 
   if (evRes.error || !evRes.data) {
     return <RsvpExpired reason="unavailable" />;
@@ -129,6 +138,34 @@ export default async function RsvpPage({ params }: PageProps) {
         return "invited";
     }
   })();
+
+  // v2: build the per-day list for the form.
+  // - For multi-day events: enumerate every event day, then pre-fill from any
+  //   existing per-day invite rows for this responder.
+  // - For single-day events: leave `days` undefined so the v1 simple UI runs.
+  const multiDay = isMultiDayEvent(event.starts_at, event.ends_at, tz);
+  let formDays: RsvpDay[] | undefined;
+  if (multiDay) {
+    const allDates = enumerateEventDays(event.starts_at, event.ends_at);
+    type MyInviteRow = { day_date: string | null; status: string };
+    const myInvites = (myInvitesRes.data ?? []) as MyInviteRow[];
+    const byDay = new Map<string, string>();
+    for (const r of myInvites) {
+      if (r.day_date) byDay.set(r.day_date, r.status);
+    }
+    const validStatuses: ReadonlySet<string> = new Set([
+      "invited",
+      "accepted",
+      "declined",
+      "cancelled_by_member",
+      "cancelled_by_manager",
+    ]);
+    formDays = allDates.map((date) => {
+      const raw = byDay.get(date);
+      const status = raw && validStatuses.has(raw) ? (raw as RsvpDay["status"]) : null;
+      return { date, status: status ?? "invited" };
+    });
+  }
 
   return (
     <div
@@ -286,6 +323,8 @@ export default async function RsvpPage({ params }: PageProps) {
             expiresAt={loaded.invite.expires_at}
             submitAction={submitRsvpResponse}
             contact={getOwnerContact()}
+            days={formDays}
+            timezone={tz}
           />
         </div>
       </div>

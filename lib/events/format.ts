@@ -121,3 +121,21 @@ export function toDateTimeLocal(
 export function shortCode(id: string): string {
   return `EV-${id.slice(0, 4).toUpperCase()}`;
 }
+
+/**
+ * v2 helper: true when the event spans more than one calendar day in its
+ * own timezone. Used to decide whether to render the per-day matrix or the
+ * single-day coverage card.
+ */
+export function isMultiDayEvent(
+  startsAt: string | Date,
+  endsAt: string | Date,
+  tz: string = DEFAULT_TZ,
+): boolean {
+  const s = toDate(startsAt);
+  const e = toDate(endsAt);
+  return (
+    formatInTimeZone(s, tz, "yyyy-MM-dd") !==
+    formatInTimeZone(e, tz, "yyyy-MM-dd")
+  );
+}

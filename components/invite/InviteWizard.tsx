@@ -6,6 +6,7 @@ import Link from "next/link";
 
 import { Btn } from "@/components/ui/Btn";
 import type { ContactChannel } from "@/lib/db/types";
+import { enumerateEventDays } from "@/lib/events/coverage";
 import {
   renderInviteEmail,
   renderInviteSms,
@@ -14,6 +15,7 @@ import {
 } from "@/lib/messaging/render-templates";
 
 import { InviteSelectStep, type InviteCandidate } from "./InviteSelectStep";
+import { InviteDaysStep } from "./InviteDaysStep";
 import { InviteComposeStep } from "./InviteComposeStep";
 import { InviteConfirmStep } from "./InviteConfirmStep";
 import { StepProgress } from "./StepProgress";
@@ -29,10 +31,21 @@ export type InviteWizardProps = {
     eventId: string;
     staffMemberIds: string[];
     channels: ContactChannel[];
+    days?: string[];
   }) => Promise<SendInvitationCampaignResult>;
 };
 
-const STEP_TITLES = ["Select responders", "Compose & preview", "Confirm send"];
+const STEP_TITLES_SINGLE = [
+  "Select responders",
+  "Compose & preview",
+  "Confirm send",
+] as const;
+const STEP_TITLES_MULTI = [
+  "Select responders",
+  "Select days",
+  "Compose & preview",
+  "Confirm send",
+] as const;
 
 export function InviteWizard({
   eventId,
@@ -41,8 +54,28 @@ export function InviteWizard({
   sendAction,
 }: InviteWizardProps) {
   const router = useRouter();
+
+  // v2: enumerate every day in the event window. Multi-day events get a
+  // dedicated "Select days" step; single-day events skip it entirely so
+  // the wizard stays at 3 steps.
+  const allDays = useMemo(
+    () => enumerateEventDays(event.starts_at, event.ends_at),
+    [event.starts_at, event.ends_at],
+  );
+  const isMultiDay = allDays.length > 1;
+
+  const STEP_TITLES = isMultiDay ? STEP_TITLES_MULTI : STEP_TITLES_SINGLE;
+  const TOTAL_STEPS = STEP_TITLES.length;
+  const SELECT_STEP = 0;
+  const DAYS_STEP = isMultiDay ? 1 : -1;
+  const COMPOSE_STEP = isMultiDay ? 2 : 1;
+  const CONFIRM_STEP = isMultiDay ? 3 : 2;
+
   const [step, setStep] = useState(0);
   const [selected, setSelected] = useState<Set<string>>(() => new Set());
+  const [selectedDays, setSelectedDays] = useState<Set<string>>(
+    () => new Set(allDays),
+  );
   const [channels, setChannels] = useState<Record<ContactChannel, boolean>>({
     sms: true,
     email: true,
@@ -51,6 +84,10 @@ export function InviteWizard({
   const [pending, startTransition] = useTransition();
 
   const selectedIds = useMemo(() => Array.from(selected), [selected]);
+  const selectedDayList = useMemo(
+    () => Array.from(selectedDays).sort(),
+    [selectedDays],
+  );
   const activeChannels: ContactChannel[] = useMemo(() => {
     const out: ContactChannel[] = [];
     if (channels.sms) out.push("sms");
@@ -138,10 +175,32 @@ export function InviteWizard({
   const toggleChannel = (c: ContactChannel) => {
     setChannels((prev) => ({ ...prev, [c]: !prev[c] }));
   };
+  const toggleDay = (date: string) => {
+    setSelectedDays((prev) => {
+      const next = new Set(prev);
+      if (next.has(date)) next.delete(date);
+      else next.add(date);
+      return next;
+    });
+  };
+  const selectAllDays = () => setSelectedDays(new Set(allDays));
+  const clearDays = () => setSelectedDays(new Set());
 
   const onContinue = () => {
     setError(null);
-    if (step < 2) setStep(step + 1);
+    if (step === SELECT_STEP && selected.size === 0) {
+      setError("Select at least one responder.");
+      return;
+    }
+    if (step === DAYS_STEP && selectedDays.size === 0) {
+      setError("Pick at least one day.");
+      return;
+    }
+    if (step === COMPOSE_STEP && activeChannels.length === 0) {
+      setError("Pick at least one channel.");
+      return;
+    }
+    if (step < CONFIRM_STEP) setStep(step + 1);
   };
 
   const onSend = () => {
@@ -154,11 +213,18 @@ export function InviteWizard({
       setError("Pick at least one channel.");
       return;
     }
+    if (isMultiDay && selectedDays.size === 0) {
+      setError("Pick at least one day.");
+      return;
+    }
     startTransition(async () => {
       const result = await sendAction({
         eventId,
         staffMemberIds: selectedIds,
         channels: activeChannels,
+        // Only forward `days` when we're actually scoping; single-day events
+        // let the backend pick the only day in the window.
+        days: isMultiDay ? selectedDayList : undefined,
       });
       if (!result.ok) {
         setError(result.error);
@@ -198,16 +264,18 @@ export function InviteWizard({
         >
           ← BACK · EVENT
         </Link>
-        <span className="cs-eyebrow">STEP {step + 1} OF 3 · {event.title}</span>
+        <span className="cs-eyebrow">
+          STEP {step + 1} OF {TOTAL_STEPS} · {event.title}
+        </span>
         <h1 className="cs-h1" style={{ marginTop: 6, fontSize: 22 }}>
           {STEP_TITLES[step]}
         </h1>
       </div>
 
-      <StepProgress step={step} />
+      <StepProgress step={step} steps={TOTAL_STEPS} />
 
       <div style={{ maxWidth: 720, margin: "0 auto" }}>
-        {step === 0 && (
+        {step === SELECT_STEP && (
           <InviteSelectStep
             candidates={candidates}
             selected={selected}
@@ -215,7 +283,17 @@ export function InviteWizard({
             onSelectAll={selectAll}
           />
         )}
-        {step === 1 && (
+        {step === DAYS_STEP && (
+          <InviteDaysStep
+            days={allDays}
+            selected={selectedDays}
+            onToggle={toggleDay}
+            onSelectAll={selectAllDays}
+            onClear={clearDays}
+            timezone={event.timezone || "America/Toronto"}
+          />
+        )}
+        {step === COMPOSE_STEP && (
           <InviteComposeStep
             channels={channels}
             smsReachable={smsReachable}
@@ -225,7 +303,7 @@ export function InviteWizard({
             onToggleChannel={toggleChannel}
           />
         )}
-        {step === 2 && (
+        {step === CONFIRM_STEP && (
           <InviteConfirmStep
             eventTitle={event.title}
             eventWhen={formatEventWhenLong(event)}
@@ -235,6 +313,8 @@ export function InviteWizard({
             skippedOptOut={skippedOptOut}
             skippedManualOnly={skippedManualOnly}
             skippedNoContact={0}
+            days={isMultiDay ? selectedDayList : undefined}
+            timezone={event.timezone || "America/Toronto"}
           />
         )}
       </div>
@@ -284,17 +364,21 @@ export function InviteWizard({
               BACK
             </Btn>
           )}
-          {step < 2 ? (
+          {step < CONFIRM_STEP ? (
             <Btn
               variant="primary"
               size="lg"
               style={{ flex: 1 }}
               onClick={onContinue}
               disabled={
-                pending || (step === 0 && selected.size === 0) || (step === 1 && activeChannels.length === 0)
+                pending ||
+                (step === SELECT_STEP && selected.size === 0) ||
+                (step === DAYS_STEP && selectedDays.size === 0) ||
+                (step === COMPOSE_STEP && activeChannels.length === 0)
               }
             >
               CONTINUE · {selected.size} SELECTED
+              {isMultiDay ? ` · ${selectedDays.size}D` : ""}
             </Btn>
           ) : (
             <Btn

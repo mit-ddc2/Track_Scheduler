@@ -98,6 +98,17 @@ export async function POST(
   }
 
   const obj = (payload ?? {}) as Record<string, unknown>;
+  // `days` may arrive as a JSON array, a comma-separated string (form-encoded),
+  // or as repeated `days=` keys (FormData collapses those into the last one
+  // unless we read getAll, but Object.fromEntries already won't catch the
+  // repeated case — JSON is the supported path for arrays).
+  let days: string[] | undefined;
+  const rawDays = obj.days;
+  if (Array.isArray(rawDays)) {
+    days = rawDays.filter((s): s is string => typeof s === "string");
+  } else if (typeof rawDays === "string" && rawDays.length > 0) {
+    days = rawDays.split(",").map((s) => s.trim()).filter(Boolean);
+  }
   const candidate: RsvpSubmitInput = {
     token,
     action: (obj.action as RsvpSubmitInput["action"]) ?? "accept",
@@ -105,6 +116,7 @@ export async function POST(
       typeof obj.note === "string" && obj.note.length > 0
         ? (obj.note as string)
         : null,
+    days,
   };
 
   const parsed = rsvpSubmitSchema.safeParse(candidate);

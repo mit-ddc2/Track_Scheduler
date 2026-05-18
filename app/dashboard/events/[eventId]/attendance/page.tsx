@@ -2,14 +2,20 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 
 import { AttendanceList } from "@/components/attendance/AttendanceList";
+import { AttendanceMatrix } from "@/components/attendance/AttendanceMatrix";
 import { MarkAllWorkedButton } from "@/components/attendance/MarkAllWorkedButton";
 import { PdfExportButton } from "@/components/attendance/PdfExportButton";
 import { Card } from "@/components/ui/Card";
 import { requireOwner } from "@/lib/auth/require-owner";
-import { listEventAttendance } from "@/lib/attendance/queries";
+import {
+  listEventAttendance,
+  listEventAttendanceMatrix,
+} from "@/lib/attendance/queries";
+import { enumerateEventDays } from "@/lib/events/coverage";
 import {
   formatEventDate,
   formatTimeRange,
+  isMultiDayEvent,
   shortCode,
 } from "@/lib/events/format";
 import { getEvent } from "@/lib/events/queries";
@@ -30,11 +36,24 @@ export default async function AttendancePage({ params, searchParams }: PageProps
   const event = await getEvent(eventId);
   if (!event) notFound();
 
-  const rows = await listEventAttendance(eventId);
   const tz = event.timezone || "America/Toronto";
+  const multiDay = isMultiDayEvent(event.starts_at, event.ends_at, tz);
   // Defaults for the PDF date-range modal: the event's own start/end day.
   const pdfFrom = event.starts_at.slice(0, 10);
   const pdfTo = event.ends_at.slice(0, 10);
+
+  // Branch the data fetch by single-day vs multi-day so we only pull what
+  // the rendered UI actually needs.
+  const days = multiDay
+    ? enumerateEventDays(event.starts_at, event.ends_at)
+    : [event.starts_at.slice(0, 10)];
+
+  const [rows, matrixRows] = await Promise.all([
+    multiDay ? Promise.resolve([]) : listEventAttendance(eventId),
+    multiDay
+      ? listEventAttendanceMatrix(eventId, days)
+      : Promise.resolve([]),
+  ]);
 
   const listRows = rows.map((r) => ({
     staff_member_id: r.staff_member_id,
@@ -94,12 +113,33 @@ export default async function AttendancePage({ params, searchParams }: PageProps
         </div>
 
         <Card>
-          <AttendanceList
-            eventId={event.id}
-            rows={listRows}
-            setStatus={setAttendanceStatus}
-            updateDetails={updateAttendanceDetails}
-          />
+          {multiDay ? (
+            <AttendanceMatrix
+              eventId={event.id}
+              days={days}
+              rows={matrixRows.map((r) => ({
+                staff_member_id: r.staff_member_id,
+                staff_display_name: r.staff_display_name,
+                role_label: r.role_label,
+                cells: r.cells.map((c) => ({
+                  day_date: c.day_date,
+                  status: c.status,
+                  attendance: c.attendance
+                    ? { status: c.attendance.status }
+                    : null,
+                })),
+              }))}
+              timezone={tz}
+              setStatus={setAttendanceStatus}
+            />
+          ) : (
+            <AttendanceList
+              eventId={event.id}
+              rows={listRows}
+              setStatus={setAttendanceStatus}
+              updateDetails={updateAttendanceDetails}
+            />
+          )}
         </Card>
       </div>
 

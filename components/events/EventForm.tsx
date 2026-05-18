@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState, useTransition } from "react";
+import { useMemo, useState, useTransition } from "react";
 
 import { Btn } from "@/components/ui/Btn";
 import { Card } from "@/components/ui/Card";
@@ -15,8 +15,8 @@ export type EventFormValues = {
   title: string;
   description: string;
   event_type: string;
-  starts_at: string; // datetime-local string
-  ends_at: string; // datetime-local string
+  starts_at: string; // datetime-local string (`yyyy-MM-dd'T'HH:mm`)
+  ends_at: string; // datetime-local string (`yyyy-MM-dd'T'HH:mm`)
   timezone: string;
   location: string;
   required_headcount: number;
@@ -55,20 +55,81 @@ const inputStyle: React.CSSProperties = {
   fontSize: 13,
 };
 
+/** Split a `yyyy-MM-dd'T'HH:mm` value into (date, time) parts, or fall
+ * back to sensible defaults. */
+function splitDateTime(value: string): { date: string; time: string } {
+  if (!value) return { date: "", time: "" };
+  const idx = value.indexOf("T");
+  if (idx < 0) return { date: value, time: "" };
+  return { date: value.slice(0, idx), time: value.slice(idx + 1, idx + 6) };
+}
+
+function joinDateTime(date: string, time: string): string {
+  if (!date) return "";
+  const t = time && /^\d{2}:\d{2}/.test(time) ? time.slice(0, 5) : "00:00";
+  return `${date}T${t}`;
+}
+
 export function EventForm({ mode, initial, action, cancelHref }: EventFormProps) {
   const router = useRouter();
   const [values, setValues] = useState<EventFormValues>(initial);
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
 
+  const startParts = useMemo(() => splitDateTime(values.starts_at), [values.starts_at]);
+  const endParts = useMemo(() => splitDateTime(values.ends_at), [values.ends_at]);
+
   const set = <K extends keyof EventFormValues>(
     key: K,
     value: EventFormValues[K],
   ) => setValues((v) => ({ ...v, [key]: value }));
 
+  const setStartDate = (date: string) =>
+    setValues((v) => {
+      const next = { ...v, starts_at: joinDateTime(date, splitDateTime(v.starts_at).time || "08:00") };
+      // If the new start date pushes past the existing end date, sync end to match.
+      const endDate = splitDateTime(v.ends_at).date;
+      if (date && endDate && date > endDate) {
+        next.ends_at = joinDateTime(date, splitDateTime(v.ends_at).time || "18:00");
+      }
+      return next;
+    });
+  const setStartTime = (time: string) =>
+    setValues((v) => ({
+      ...v,
+      starts_at: joinDateTime(splitDateTime(v.starts_at).date, time),
+    }));
+  const setEndDate = (date: string) =>
+    setValues((v) => ({
+      ...v,
+      ends_at: joinDateTime(date, splitDateTime(v.ends_at).time || "18:00"),
+    }));
+  const setEndTime = (time: string) =>
+    setValues((v) => ({
+      ...v,
+      ends_at: joinDateTime(splitDateTime(v.ends_at).date, time),
+    }));
+
   const onSubmit = (event: React.FormEvent) => {
     event.preventDefault();
     setError(null);
+
+    // Validate date range client-side so we don't bounce through the server
+    // for the most common mistakes.
+    const sd = splitDateTime(values.starts_at);
+    const ed = splitDateTime(values.ends_at);
+    if (!sd.date || !ed.date) {
+      setError("Start and end dates are required.");
+      return;
+    }
+    if (ed.date < sd.date) {
+      setError("End date must be on or after the start date.");
+      return;
+    }
+    if (sd.date === ed.date && ed.time && sd.time && ed.time <= sd.time) {
+      setError("End time must be after start time on the same day.");
+      return;
+    }
 
     startTransition(async () => {
       const result = await action(values);
@@ -131,29 +192,58 @@ export function EventForm({ mode, initial, action, cancelHref }: EventFormProps)
           />
         </div>
 
+        {/* Date-range picker (v2): separate date + time inputs so the picker
+            is friendlier on phones and same-day vs multi-day is obvious. */}
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
           <div>
-            <label className="cs-label" style={labelStyle} htmlFor="starts_at">
-              Starts*
+            <label className="cs-label" style={labelStyle} htmlFor="start_date">
+              Start date*
             </label>
             <input
-              id="starts_at"
-              type="datetime-local"
-              value={values.starts_at}
-              onChange={(e) => set("starts_at", e.target.value)}
+              id="start_date"
+              type="date"
+              value={startParts.date}
+              onChange={(e) => setStartDate(e.target.value)}
               required
               style={inputStyle}
             />
           </div>
           <div>
-            <label className="cs-label" style={labelStyle} htmlFor="ends_at">
-              Ends*
+            <label className="cs-label" style={labelStyle} htmlFor="end_date">
+              End date*
             </label>
             <input
-              id="ends_at"
-              type="datetime-local"
-              value={values.ends_at}
-              onChange={(e) => set("ends_at", e.target.value)}
+              id="end_date"
+              type="date"
+              value={endParts.date}
+              min={startParts.date || undefined}
+              onChange={(e) => setEndDate(e.target.value)}
+              required
+              style={inputStyle}
+            />
+          </div>
+          <div>
+            <label className="cs-label" style={labelStyle} htmlFor="start_time">
+              Start time*
+            </label>
+            <input
+              id="start_time"
+              type="time"
+              value={startParts.time}
+              onChange={(e) => setStartTime(e.target.value)}
+              required
+              style={inputStyle}
+            />
+          </div>
+          <div>
+            <label className="cs-label" style={labelStyle} htmlFor="end_time">
+              End time*
+            </label>
+            <input
+              id="end_time"
+              type="time"
+              value={endParts.time}
+              onChange={(e) => setEndTime(e.target.value)}
               required
               style={inputStyle}
             />

@@ -7,23 +7,18 @@ function defaultValues(): EventFormValues {
   const tomorrow = new Date();
   tomorrow.setDate(tomorrow.getDate() + 1);
 
-  const start = new Date(tomorrow);
-  start.setHours(9, 0, 0, 0);
-  const end = new Date(tomorrow);
-  end.setHours(17, 0, 0, 0);
-
   const pad = (n: number) => String(n).padStart(2, "0");
-  const fmt = (d: Date) =>
-    `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(
-      d.getHours(),
-    )}:${pad(d.getMinutes())}`;
+  const ymd = `${tomorrow.getFullYear()}-${pad(tomorrow.getMonth() + 1)}-${pad(
+    tomorrow.getDate(),
+  )}`;
 
+  // v2 defaults: Tomorrow + Tomorrow, 08:00 → 18:00.
   return {
     title: "",
     description: "",
     event_type: "",
-    starts_at: fmt(start),
-    ends_at: fmt(end),
+    starts_at: `${ymd}T08:00`,
+    ends_at: `${ymd}T18:00`,
     timezone: "America/Toronto",
     location: "",
     required_headcount: 1,

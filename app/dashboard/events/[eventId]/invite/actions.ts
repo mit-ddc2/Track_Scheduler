@@ -59,6 +59,7 @@ export async function sendInvitationCampaign(
       emailSubject: input.emailSubject ?? null,
       emailTemplate: input.emailTemplate ?? null,
       createdBy: session.profile.id,
+      days: input.days,
     });
 
     await writeAudit({
