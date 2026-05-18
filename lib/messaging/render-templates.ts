@@ -152,33 +152,47 @@ export function formatDaysShortForEvent(
 
 // ─── Invite SMS ───────────────────────────────────────────────────
 /**
- * Spec §8.8 example:
- *   "Calabogie Safety: Rescue crew request for {title}, {date}, {time-range}.
- *    RSVP: {url} Reply STOP to opt out."
- * Constraints: stay single-segment for typical inputs (~160 chars excluding
- * URL — caller is responsible for keeping the URL ≤ ~30 chars).
+ * Multi-line layout for clarity on a phone. Carriers concatenate segments
+ * fine; we prioritise readability over a single-segment fit.
+ *
+ *   Calabogie Safety — Robert here.
+ *
+ *   Rescue crew request:
+ *   {title}
+ *   {when, or day list for multi-day}
+ *
+ *   RSVP here:
+ *   {url}
+ *
+ *   Reply STOP to opt out.
  */
 export function renderInviteSms({
   event,
   rsvpUrl,
   days,
 }: RenderInviteInput): string {
-  // v2: prefer an explicit day-list when present (multi-day RSVP). Falls
-  // back to the v1 single-line "when" for single-day events or callers
-  // that haven't been migrated yet.
-  const when =
-    days && days.length > 0
-      ? formatDaysShortForEvent(event, days)
-      : formatEventWhenShort(event);
-  const dayWord = days && days.length > 1 ? "days" : "day";
-  const phrase =
-    days && days.length > 0
-      ? `Rescue crew request for ${event.title} (${days.length} ${dayWord}: ${when}).`
-      : `Rescue crew request for ${event.title}, ${when}.`;
-  return (
-    `Calabogie Safety: ${phrase}` +
-    ` RSVP: ${rsvpUrl} Reply STOP to opt out.`
-  );
+  const hasDays = !!days && days.length > 0;
+  const when = hasDays
+    ? formatDaysShortForEvent(event, days)
+    : formatEventWhenShort(event);
+  const dayCount = hasDays ? days!.length : 0;
+  const dayWord = dayCount === 1 ? "day" : "days";
+  const whenLine = hasDays
+    ? `${when} (${dayCount} ${dayWord})`
+    : when;
+
+  return [
+    "Calabogie Safety — Robert here.",
+    "",
+    "Rescue crew request:",
+    event.title,
+    whenLine,
+    "",
+    "RSVP here:",
+    rsvpUrl,
+    "",
+    "Reply STOP to opt out.",
+  ].join("\n");
 }
 
 // ─── Invite email ─────────────────────────────────────────────────

@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  estimateSmsSegments,
   formatCancellationDays,
   formatDaysShort,
   renderCampaignChangeNoticeEmail,
@@ -29,25 +28,17 @@ const sampleRecipient: TemplateRecipient = {
 };
 
 describe("renderInviteSms", () => {
-  it("matches the spec §8.8 example shape", () => {
+  it("uses the multi-line layout with Robert byline + RSVP link on its own line", () => {
     const out = renderInviteSms({
       event: sampleEvent,
       recipient: sampleRecipient,
       rsvpUrl: "https://app.example.com/r/abc123",
     });
-    expect(out).toContain("Calabogie Safety");
+    expect(out).toContain("Calabogie Safety — Robert here.");
+    expect(out).toContain("Rescue crew request:");
     expect(out).toContain("AISA Driving School");
-    expect(out).toContain("RSVP: https://app.example.com/r/abc123");
+    expect(out).toContain("\nhttps://app.example.com/r/abc123\n");
     expect(out.toUpperCase()).toContain("STOP");
-  });
-
-  it("fits in a single SMS segment for a typical event", () => {
-    const out = renderInviteSms({
-      event: sampleEvent,
-      recipient: sampleRecipient,
-      rsvpUrl: "https://cs.app/r/abc123def456",
-    });
-    expect(estimateSmsSegments(out)).toBe(1);
   });
 });
 
