@@ -2,9 +2,12 @@ import { describe, expect, it } from "vitest";
 
 import {
   estimateSmsSegments,
+  formatCancellationDays,
   formatDaysShort,
   renderCampaignChangeNoticeEmail,
   renderCampaignChangeNoticeSms,
+  renderCancellationEmail,
+  renderCancellationSms,
   renderInviteEmail,
   renderInviteSms,
   type TemplateEvent,
@@ -159,6 +162,91 @@ describe("v2: per-day rendering", () => {
     });
     expect(out.subject).toMatch(/^Rescue Team Request: AISA Driving School —/);
     expect(out.text).not.toContain("Days requested:");
+  });
+});
+
+describe("cancellation templates", () => {
+  it("formatCancellationDays single-day returns one label", () => {
+    expect(formatCancellationDays(["2026-05-23"])).toBe("Sat May 23");
+  });
+
+  it("formatCancellationDays multi-day uses ' + ' before the last entry", () => {
+    expect(formatCancellationDays(["2026-05-23", "2026-05-24"])).toBe(
+      "Sat May 23 + Sun May 24",
+    );
+    expect(
+      formatCancellationDays(["2026-05-23", "2026-05-24", "2026-05-25"]),
+    ).toBe("Sat May 23, Sun May 24 + Mon May 25");
+  });
+
+  it("renderCancellationSms single-day matches the spec shape", () => {
+    const out = renderCancellationSms({
+      event: sampleEvent,
+      recipient: sampleRecipient,
+      dayDates: ["2026-05-23"],
+    });
+    expect(out).toContain("Calabogie Safety:");
+    expect(out).toContain("AISA Driving School");
+    expect(out).toContain("on Sat May 23");
+    expect(out).toContain("has been CANCELLED");
+    expect(out).toContain("No need to come in");
+    expect(out).toContain("- Robert");
+    expect(out.toUpperCase()).toContain("STOP");
+  });
+
+  it("renderCancellationSms multi-day lists the days with ' + ' separator", () => {
+    const out = renderCancellationSms({
+      event: sampleEvent,
+      recipient: sampleRecipient,
+      dayDates: ["2026-05-23", "2026-05-24"],
+    });
+    expect(out).toContain("on Sat May 23 + Sun May 24");
+    expect(out).toContain("has been CANCELLED");
+    expect(out.toUpperCase()).toContain("STOP");
+  });
+
+  it("renderCancellationEmail multi-day subject lists every affected day", () => {
+    const out = renderCancellationEmail({
+      event: sampleEvent,
+      recipient: sampleRecipient,
+      dayDates: ["2026-05-23", "2026-05-24"],
+    });
+    expect(out.subject).toBe(
+      "CANCELLED: AISA Driving School — Sat May 23 + Sun May 24",
+    );
+    expect(out.text).toContain("Sat May 23 + Sun May 24");
+    expect(out.html).toContain("Sat May 23 + Sun May 24");
+  });
+
+  it("renderCancellationEmail surfaces reason + owner contact phone when provided", () => {
+    const out = renderCancellationEmail({
+      event: sampleEvent,
+      recipient: sampleRecipient,
+      dayDates: ["2026-05-23"],
+      reason: "Weather — track closed.",
+      ownerContactPhone: "+1 613 555 0199",
+    });
+    expect(out.text).toContain("Reason: Weather — track closed.");
+    expect(out.text).toContain("+1 613 555 0199");
+    expect(out.html).toContain("Weather");
+    expect(out.html).toContain("+1 613 555 0199");
+  });
+
+  it("renderCancellationEmail escapes html-significant chars in title + reason", () => {
+    const evil: TemplateEvent = {
+      ...sampleEvent,
+      title: 'Trackday <script>alert(1)</script>',
+    };
+    const out = renderCancellationEmail({
+      event: evil,
+      recipient: sampleRecipient,
+      dayDates: ["2026-05-23"],
+      reason: '<img src=x onerror=alert(1)>',
+    });
+    expect(out.html).not.toContain("<script>alert(1)</script>");
+    expect(out.html).not.toContain("<img src=x onerror=alert(1)>");
+    expect(out.html).toContain("&lt;script&gt;");
+    expect(out.html).toContain("&lt;img");
   });
 });
 

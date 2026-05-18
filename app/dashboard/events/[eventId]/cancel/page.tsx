@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { Card } from "@/components/ui/Card";
 import { requireOwner } from "@/lib/auth/require-owner";
 import { getEvent } from "@/lib/events/queries";
+import { previewCancellationFanout } from "@/lib/messaging/cancel-fanout";
 import { cancelEvent } from "../../actions";
 
 import { CancelEventForm } from "./CancelEventForm";
@@ -17,6 +18,13 @@ export default async function CancelEventPage({ params }: PageProps) {
 
   const event = await getEvent(eventId);
   if (!event) notFound();
+
+  // Preview how many responders this cancel would notify. Safe even when
+  // there are zero invites — the helper returns an all-zeros object.
+  const preview =
+    event.status === "cancelled" || event.status === "completed"
+      ? null
+      : await previewCancellationFanout(eventId).catch(() => null);
 
   async function submit(reason: string) {
     "use server";
@@ -45,8 +53,8 @@ export default async function CancelEventPage({ params }: PageProps) {
           }}
         >
           Cancellation is permanent. The event stays in history for audit and
-          payroll purposes. Phase 5 will send opt-in cancellation notifications
-          to invited responders.
+          payroll purposes. Anyone who has not already declined will get a
+          cancellation message on submit.
         </p>
       </header>
 
@@ -70,6 +78,7 @@ export default async function CancelEventPage({ params }: PageProps) {
         <CancelEventForm
           action={submit}
           backHref={`/dashboard/events/${eventId}`}
+          preview={preview}
         />
       )}
     </div>
