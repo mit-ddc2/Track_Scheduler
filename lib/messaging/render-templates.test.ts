@@ -122,15 +122,17 @@ describe("v2: per-day rendering", () => {
     expect(out.toUpperCase()).toContain("STOP");
   });
 
-  it("renderInviteSms with a single-day list uses singular phrasing", () => {
+  it("renderInviteSms with a single-day list shows the time range, not the day count", () => {
     const out = renderInviteSms({
       event: sampleEvent,
       recipient: sampleRecipient,
       rsvpUrl: "https://x.test/r/1",
       days: ["2026-05-23"],
     });
-    expect(out).toContain("1 day");
-    expect(out).not.toContain("1 days");
+    // Single-day events read better with "Sat May 23, 7:30am-5:00pm" than
+    // "(1 day)" — the time range is what the responder actually needs.
+    expect(out).not.toContain("(1 day");
+    expect(out).toContain("Sat May 23");
   });
 
   it("renderInviteEmail subject + body call out the requested days", () => {

@@ -171,15 +171,12 @@ export function renderInviteSms({
   rsvpUrl,
   days,
 }: RenderInviteInput): string {
-  const hasDays = !!days && days.length > 0;
-  const when = hasDays
-    ? formatDaysShortForEvent(event, days)
+  // Multi-day (2+) → list days + count. Single-day or no days[] → show the
+  // date + time range, which is what the responder actually needs to plan.
+  const isMultiDay = !!days && days.length > 1;
+  const whenLine = isMultiDay
+    ? `${formatDaysShortForEvent(event, days)} (${days!.length} days)`
     : formatEventWhenShort(event);
-  const dayCount = hasDays ? days!.length : 0;
-  const dayWord = dayCount === 1 ? "day" : "days";
-  const whenLine = hasDays
-    ? `${when} (${dayCount} ${dayWord})`
-    : when;
 
   return [
     "Calabogie Safety — Robert here.",
